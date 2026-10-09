@@ -1,0 +1,30 @@
+/**:
+  ros__parameters:
+    use_real_drone: true
+    max_z: 2.0
+    arena_x_min: -2.0
+    arena_x_max: 2.0
+    arena_y_min: -2.0
+    arena_y_max: 2.0
+    Kp_x: 0.8
+    Ki_x: 0.05
+    Kd_x: 0.3
+    Kp_y: 0.8
+    Ki_y: 0.05
+    Kd_y: 0.3
+    Kp_z: 1.0
+    Ki_z: 0.1
+    Kd_z: 0.4
+    Kp_yaw: 1.0
+    Ki_yaw: 0.0
+    Kd_yaw: 0.5
+    scale_x: 1.0
+    scale_y: 1.0
+    trim_x: 0.0
+    trim_y: 0.0
+    target_x: 1.0
+    target_y: 0.0
+    circle_radius: 0.15
+    circle_speed: 0.15
+    lookat_x: 1.0
+    lookat_y: 0.0

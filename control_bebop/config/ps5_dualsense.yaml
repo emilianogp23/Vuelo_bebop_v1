@@ -1,0 +1,31 @@
+# Mapeo PS5 DualSense para Linux (joy_node)
+# Verificar mapeo real con: ros2 topic echo /joy
+# Nota: Los índices pueden variar según driver (hid_playstation vs xpad)
+#       Usar jstest o evtest para confirmar antes de volar.
+
+joystick_interface:
+  ros__parameters:
+    # ── Deadman switch ──
+    deadman_axis: 2          # L2 trigger (rango 1.0 reposo → -1.0 presionado)
+    deadman_threshold: 0.0   # Se considera activo en cuanto se presiona a la mitad (< 0.0)
+
+    # ── Sticks ──
+    axis_pitch: 1            # Stick izquierdo Y (avance/retroceso)
+    axis_roll: 0             # Stick izquierdo X (lateral izq/der)
+    axis_throttle: 7         # Stick derecho Y (subir/bajar)
+    axis_yaw: 6              # Stick derecho X (rotación yaw)
+
+    # ── Botones ──
+    btn_takeoff: 0           # × (Cruz) — Despegar
+    btn_land: 1              # ○ (Círculo) — Aterrizar
+    btn_emergency: 2         # △ (Triángulo) — Parada de emergencia
+    btn_mode_toggle: 3       # □ (Cuadrado) — Alternar Auto/Manual
+    btn_return_home: 4       # L1 — Regresar a home
+    btn_auto_start: 5        # R1 — Iniciar trayectoria automática
+    btn_reset: 9             # Options — Reset desde Emergency
+
+    # ── Límites de velocidad ──
+    max_linear_speed: 0.5    # m/s (pitch y roll)
+    max_vertical_speed: 0.5  # m/s (throttle)
+    max_yaw_rate: 0.5        # rad/s (rotación)
+    stick_deadzone: 0.15     # Zona muerta de sticks

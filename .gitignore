@@ -1,0 +1,10 @@
+control_bebop.zip
+drone_gazebo/
+drone_gazebo.zip
+my_robot_project/
+ros2_bebop_driver/
+ros2_parrot_arsdk/
+VeranoUG2026-Optimizador_Trayectoria/
+control_bebop/bags/
+control_bebop/videos/
+control_bebop/.pytest_cache/
