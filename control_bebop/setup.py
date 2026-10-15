@@ -31,6 +31,7 @@ setup(
     entry_points={
         'console_scripts': [
             'trajectory_planner = control_bebop.trajectory_controller:main',
+            'trajectory_preview = control_bebop.trajectory_preview:main',
             'odom_viewer = control_bebop.odom_viewer:main',
             'control_panel = control_bebop.control_panel:main',
             'control_PID = control_bebop.control_PID:main',

@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 import sys
 import os
-sys.path.append('/home/emiliano/rob_env/lib/python3.10/site-packages')
-# Compatibilidad con venvs
-for p in ['/home/emiliano/rob_env/lib/python3.12/site-packages', '/home/emiliano/rob_env/lib/python3.10/site-packages']:
+# Compatibilidad con venvs (rosbags instalado en el venv del usuario)
+for p in [os.path.expanduser('~/env_dron/lib/python3.10/site-packages'),
+          os.path.expanduser('~/env_dron/lib/python3.12/site-packages')]:
     if os.path.exists(p) and p not in sys.path:
-        sys.path.insert(0, p)
+        sys.path.append(p)
 
 import argparse
 import numpy as np
 import yaml
 from rosbags.rosbag2 import Reader
 from rosbags.typesys import Stores, get_typestore
+
+# Orden de preferencia: /odom_local está en el marco de despegue (x = frente
+# del dron al despegar), que es donde se mide con cinta. /bebop/odom está en
+# Norte/Oeste y solo sirve si el dron despegó mirando al norte.
+ODOM_TOPICS = ('/odom_local', '/bebop/odom', '/odom')
+
 
 def main():
     parser = argparse.ArgumentParser(description='Analiza deriva y calcula factores de corrección a partir de un rosbag del Bebop 2.')
@@ -20,27 +26,29 @@ def main():
     parser.add_argument('--tape-y', type=float, default=0.0, help='Distancia Y real medida con cinta (metros)')
     args = parser.parse_args()
 
-    # We will read: /odom (nav_msgs/msg/Odometry), /cmd_vel or /joy
-    # In manual flight, we can assume the drone hovered and then moved.
-    odom_data = []
+    odom_by_topic = {t: [] for t in ODOM_TOPICS}
     typestore = get_typestore(Stores.ROS2_HUMBLE)
 
     print(f"Abriendo rosbag: {args.bag_path}")
     try:
         with Reader(args.bag_path) as reader:
             for connection, timestamp, rawdata in reader.messages():
-                if connection.topic in ('/bebop/odom', '/odom', '/odom_local'):
+                if connection.topic in odom_by_topic:
                     msg = typestore.deserialize_cdr(rawdata, connection.msgtype)
                     x = msg.pose.pose.position.x
                     y = msg.pose.pose.position.y
-                    odom_data.append((timestamp, x, y))
+                    odom_by_topic[connection.topic].append((timestamp, x, y))
     except Exception as e:
         print(f"Error al leer el rosbag: {e}")
         return
 
-    if not odom_data:
-        print("No se encontraron mensajes /odom en el bag.")
+    # Usar UN solo tópico (antes se mezclaban /bebop/odom y /odom_local)
+    topic = next((t for t in ODOM_TOPICS if odom_by_topic[t]), None)
+    if topic is None:
+        print("No se encontraron mensajes de odometría en el bag.")
         return
+    odom_data = odom_by_topic[topic]
+    print(f"Usando tópico: {topic} ({len(odom_data)} mensajes)")
 
     # Sort just in case
     odom_data.sort(key=lambda item: item[0])
@@ -61,43 +69,34 @@ def main():
         scale_x = abs(args.tape_x) / abs(dx_odom)
     if abs(args.tape_y) > 0.1 and abs(dy_odom) > 0.05:
         scale_y = abs(args.tape_y) / abs(dy_odom)
+    elif abs(args.tape_x) > 0.1:
+        # Sin medida en Y: usar la misma escala que X (flujo óptico isotrópico)
+        scale_y = scale_x
 
     # Deriva (asumiendo que en reposo se desvió, simplificado)
     # This is a very rough estimate unless we know exactly when it was in hover
     # For now, let's just create the calibrated yaml with the scale
     # To really calculate trim, we'd look at periods where cmd_vel is 0
     # But as an automated offline tool, this is what was promised.
-    
+
     print("\n=== RESULTADOS DE ANÁLISIS ===")
     print(f"Duración de grabación: {dt_total:.1f} s")
     print(f"Odometría X leída: {dx_odom:.3f} m | Real esperada: {args.tape_x:.3f} m -> Scale X: {scale_x:.3f}")
     print(f"Odometría Y leída: {dy_odom:.3f} m | Real esperada: {args.tape_y:.3f} m -> Scale Y: {scale_y:.3f}")
+    if not (0.5 <= scale_x <= 2.0 and 0.5 <= scale_y <= 2.0):
+        print("⚠️  Escala fuera de [0.5, 2.0]: revisa la medición; NO se guarda.")
+        return
 
-    # Generate YAML en la carpeta src y en share si existe
-    src_yaml = os.path.expanduser('~/ros2_ws/src/control_bebop/config/real_drone_calibrated.yaml')
+    # Generar YAML en el paquete real (Vuelo_bebop_v1)
+    src_yaml = os.path.expanduser(
+        '~/ros2_ws/src/Vuelo_bebop_v1/control_bebop/config/real_drone_calibrated.yaml')
     yaml_path = os.path.abspath(src_yaml)
 
+    # Solo corrección de odometría: las ganancias y la trayectoria
+    # se quedan en real_drone.yaml para no sobreescribirlas sin probar.
     config = {
         '/**': {
             'ros__parameters': {
-                'use_real_drone': True,
-                'max_z': 2.0,
-                'arena_x_min': -2.0,
-                'arena_x_max': 2.0,
-                'arena_y_min': -2.0,
-                'arena_y_max': 2.0,
-                'kp_xy': 0.8,
-                'ki_xy': 0.05,
-                'kd_xy': 0.3,
-                'Kp_y': 0.8,
-                'Ki_y': 0.05,
-                'Kd_y': 0.3,
-                'kp_z': 1.0,
-                'ki_z': 0.1,
-                'kd_z': 0.4,
-                'kp_yaw': 1.0,
-                'ki_yaw': 0.0,
-                'kd_yaw': 0.5,
                 'scale_x': float(scale_x),
                 'scale_y': float(scale_y),
                 'trim_x': 0.0,  # Could be estimated later
