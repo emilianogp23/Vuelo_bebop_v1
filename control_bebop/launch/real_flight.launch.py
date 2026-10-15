@@ -29,6 +29,7 @@ from launch.actions import DeclareLaunchArgument, ExecuteProcess, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from datetime import datetime
 
 
 def _build_nodes(context):
@@ -36,23 +37,29 @@ def _build_nodes(context):
     base_cfg = os.path.join(pkg_dir, 'config', 'real_drone.yaml')
     joy_cfg = os.path.join(pkg_dir, 'config', 'ps5_dualsense.yaml')
 
-    # Calibración: se busca en el src (donde la escribe analisis_deriva)
-    calib_src = os.path.expanduser(
-        '~/ros2_ws/src/control_bebop/config/real_drone_calibrated.yaml')
+    # Calibración: se busca en src de Vuelo_bebop_v1, control_bebop o share
+    calib_candidates = [
+        os.path.expanduser('~/ros2_ws/src/Vuelo_bebop_v1/control_bebop/config/real_drone_calibrated.yaml'),
+        os.path.join(pkg_dir, 'config', 'real_drone_calibrated.yaml'),
+        os.path.expanduser('~/ros2_ws/src/control_bebop/config/real_drone_calibrated.yaml'),
+    ]
+    calib_src = next((c for c in calib_candidates if os.path.exists(c)), None)
     use_calib = LaunchConfiguration('use_calibration').perform(context).lower() == 'true'
 
     params = [base_cfg]
-    if use_calib and os.path.exists(calib_src):
+    if use_calib and calib_src:
         params.append(calib_src)
         print(f'[real_flight] Usando calibración: {calib_src}')
     elif use_calib:
-        print('[real_flight] use_calibration:=true pero no existe el YAML, se ignora.')
+        print('[real_flight] use_calibration:=true pero no existe real_drone_calibrated.yaml, se ignora.')
 
     # Forzado explícito: NUNCA depender de que el YAML lo traiga
     real = {'use_real_drone': True}
 
-    bag_dir = os.path.expanduser('~/ros2_ws/src/control_bebop/bags')
-    bag_path = os.path.join(bag_dir, f'vuelo_real_{int(time.time())}')
+    bag_dir = os.path.expanduser('~/ros2_ws/src/Vuelo_bebop_v1/control_bebop/bags')
+    os.makedirs(bag_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    bag_path = os.path.join(bag_dir, f'vuelo_real_{timestamp}')
 
     return [
         Node(
@@ -136,7 +143,7 @@ def _build_nodes(context):
             cmd=['ros2', 'bag', 'record', '-o', bag_path,
                  '/bebop/odom', '/bebop/cmd_vel', '/bridge/cmd_vel_raw',
                  '/bebop1/pose', '/odom_local', '/joy', '/joy_cmd',
-                 '/flight_state', '/goal'],
+                 '/flight_state', '/goal', '/goal_vel'],
             output='log',
         ),
     ]
