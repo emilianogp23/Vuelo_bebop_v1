@@ -1,9 +1,10 @@
-"""Pruebas sin ROS de la geocerca, los marcos y el término D del PID."""
+"""Pruebas sin ROS de la geocerca, los marcos, la altura y el PID."""
 import math
+import os
 
 import pytest
 
-from control_bebop.frames import TakeoffFrame, rotate2d
+from control_bebop.frames import TakeoffFrame, rotate2d, select_altitude
 from control_bebop.safety import GeofenceParams, apply_geofence
 
 
@@ -81,3 +82,35 @@ def test_pid_fallback_differentiates_position():
     pid.control_pitch(0.0, 0.0, 0.1)          # primera muestra: D = 0
     cmd = pid.control_pitch(0.0, 0.01, 0.1)   # se movió 1 cm en 0.1 s
     assert cmd == pytest.approx(0.25 * -0.01 + 0.60 * -0.1)
+
+
+def test_pid_integral_can_compensate_drift():
+    # Vuelo del 16 oct: con ki 0.03 e int_limit 0.5 el integral saturaba en
+    # 0.015 y no compensaba la deriva. Con real_drone.yaml debe llegar a ~0.10.
+    yaml = pytest.importorskip('yaml')
+    cfg_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'real_drone.yaml')
+    with open(cfg_path) as f:
+        cfg = yaml.safe_load(f)['/**']['ros__parameters']
+    pid = _pid()
+    pid.ki_pitch = cfg['ki_xy']
+    pid.int_limit_xy = cfg['int_limit_xy']
+    for _ in range(300):                      # 30 s con 0.3 m de error
+        cmd = pid.control_pitch(0.3, 0.0, 0.1, vel=0.0, vel_ref=0.0)
+    assert cmd - 0.25 * 0.3 == pytest.approx(cfg['ki_xy'] * cfg['int_limit_xy'])
+    assert cfg['ki_xy'] * cfg['int_limit_xy'] >= 0.09
+
+
+# ── Altura: /bebop/altitude contra z integrada ────────────────
+def test_select_altitude_uses_recent_measurement():
+    z, measured = select_altitude(1.6, 1.02, 0.2, 1.0)
+    assert (z, measured) == (pytest.approx(1.02), True)
+
+
+def test_select_altitude_falls_back_when_stale():
+    z, measured = select_altitude(1.6, 1.02, 1.5, 1.0)
+    assert (z, measured) == (pytest.approx(1.6), False)
+
+
+def test_select_altitude_falls_back_without_measurement():
+    assert select_altitude(0.7, None, None, 1.0) == (pytest.approx(0.7), False)
+

@@ -7,6 +7,7 @@ Cadena de comandos:
     control_PID   → /bridge/cmd_vel_raw
     real_drone_bridge → /bebop/takeoff, /bebop/land, /bebop/reset, /bebop/flattrim, /bebop/cmd_vel
     real_drone_bridge ← /bebop/odom   → /bebop1/pose (marco de despegue), /odom_local
+    real_drone_bridge ← /bebop/altitude → z de /bebop1/pose (requiere el parche del driver)
 
 Uso:
     # Driver corriendo en otra terminal (recomendado):
@@ -67,7 +68,10 @@ def _build_nodes(context):
             name='bebop_driver',
             namespace='bebop',
             output='screen',
-            parameters=[{'bebop_ip': LaunchConfiguration('ip').perform(context)}],
+            parameters=[{
+                'bebop_ip': LaunchConfiguration('ip').perform(context),
+                'max_altitude': float(LaunchConfiguration('max_altitude').perform(context)),
+            }],
             condition=IfCondition(LaunchConfiguration('launch_driver')),
         ),
         Node(
@@ -142,7 +146,8 @@ def _build_nodes(context):
             cmd=['ros2', 'bag', 'record', '-o', bag_path,
                  '/bebop/odom', '/bebop/cmd_vel', '/bridge/cmd_vel_raw',
                  '/bebop1/pose', '/odom_local', '/joy', '/joy_cmd',
-                 '/flight_state', '/goal', '/goal_vel'],
+                 '/flight_state', '/goal', '/goal_vel',
+                 '/bebop/altitude', '/trajectory_stalled'],
             output='log',
         ),
     ]
@@ -156,6 +161,8 @@ def generate_launch_description():
                               description='Abrir ventana interactiva de odometría'),
         DeclareLaunchArgument('ip', default_value='192.168.42.1',
                               description='IP del Bebop 2'),
+        DeclareLaunchArgument('max_altitude', default_value='2.0',
+                              description='Techo de firmware enviado al Bebop (con launch_driver:=true)'),
         DeclareLaunchArgument('use_calibration', default_value='false',
                               description='Cargar config/real_drone_calibrated.yaml'),
         OpaqueFunction(function=_build_nodes),

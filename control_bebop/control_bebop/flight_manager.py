@@ -143,6 +143,8 @@ class FlightManager(Node):
             Pose, '/bebop1/pose', self._pose_callback, 10)
         self.create_subscription(
             Bool, '/trajectory_done', self._trajectory_done_callback, 10)
+        self.create_subscription(
+            Bool, '/trajectory_stalled', self._trajectory_stalled_callback, 10)
 
         # ── Estado interno ────────────────────────────────────
         self.state = IDLE
@@ -423,6 +425,17 @@ class FlightManager(Node):
                 self._transition_to(RETURN_HOME)
             else:
                 self._transition_to(HOVER)
+
+    def _trajectory_stalled_callback(self, msg):
+        """Órbita atascada: el dron no alcanza el setpoint (deriva).
+
+        En HOVER el PID manda ceros y el Bebop recupera su hover nativo.
+        Con R1 se reanuda desde el punto de la órbita donde se quedó.
+        """
+        if msg.data and self.state == AUTOMATIC:
+            self.get_logger().warn(
+                '⚠️ Órbita atascada (deriva) → HOVER. R1 con L2 para reanudar')
+            self._transition_to(HOVER)
 
     # ══════════════════════════════════════════════════════════
     #  LOOP PRINCIPAL

@@ -41,6 +41,22 @@ def rotate2d(x, y, angle):
     return c * x - s * y, s * x + c * y
 
 
+def select_altitude(z_integrated, altitude, altitude_age, timeout):
+    """Elige la z a publicar en el marco de despegue.
+
+    ``altitude`` es la altura que mide el Bebop (sonar + barómetro, relativa
+    al despegue, de ``/bebop/altitude``). Se usa si existe y su edad en
+    segundos no supera ``timeout``. Si no, se regresa la z integrada del driver,
+    que deriva.
+
+    Returns:
+        (z, es_medida)
+    """
+    if altitude is not None and altitude_age is not None and altitude_age <= timeout:
+        return float(altitude), True
+    return float(z_integrated), False
+
+
 class TakeoffFrame:
     """Transforma odometría del driver al marco de despegue.
 

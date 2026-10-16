@@ -46,6 +46,7 @@ El proyecto busca reconstruir en 3D un objeto de interés usando un dron Parrot 
 Vuelo_bebop_v1/
 ├── README.md               Portada breve del repositorio
 ├── DOCUMENTACION.md        Este documento
+├── patches/                Parches a paquetes externos (altura real en el driver)
 ├── bebop_ros/              Simulación en Gazebo (copia de juliordzcer/bebop_ros)
 │   ├── bebop_gz/           Mundo bebop1.sdf, modelo del dron, plugins de Gazebo
 │   ├── bebop_demo/         set_pose (pose inicial) y config del puente ROS↔Gazebo
@@ -72,7 +73,7 @@ No están en este repositorio, pero deben estar en `~/ros2_ws/src`:
 | `ros2_bebop_driver` | github.com/jeremyfix/ros2_bebop_driver | Driver ROS 2 del Bebop real: comandos, odometría, cámara |
 | `ros2_parrot_arsdk` | Dependencia del driver | SDK oficial de Parrot (ARSDK 3.14) compilado |
 
-El driver es de terceros y **no se modifica** en este proyecto. Su autor lo declara versión alfa, con odometría poco probada.
+El driver es de terceros. Su autor lo declara versión alfa, con odometría poco probada. Este proyecto le aplica un parche, `patches/ros2_bebop_driver_altitude.patch`, que publica la altura real en `/bebop/altitude` y fija el techo de firmware con el parámetro `max_altitude`. Se aplica con `git apply`, ver `patches/README.md`. Sin el parche el sistema funciona, pero la z vuelve a ser la velocidad integrada.
 
 ---
 
@@ -109,6 +110,7 @@ cd ~/ros2_ws
 source /opt/ros/humble/setup.bash        # o jazzy
 colcon build --packages-select control_bebop
 # La primera vez, también la simulación y el driver:
+# (antes, aplicar patches/ros2_bebop_driver_altitude.patch al driver)
 colcon build --packages-select bebop_gz bebop_demo ros2_parrot_arsdk ros2_bebop_driver
 source install/setup.bash
 ```
@@ -135,11 +137,12 @@ flowchart LR
     fm -->|/flight_state| vid[nodo_video]
     fm -->|/goal en HOVER, RECOVERY, HOME| pid
     tp -->|/goal, /goal_vel| pid
-    tp -->|/trajectory_done| fm
+    tp -->|/trajectory_done, /trajectory_stalled| fm
     pid -->|/bridge/cmd_vel_raw| br[real_drone_bridge]
     fm -->|/bridge/takeoff, land, emergency, flattrim| br
     br -->|/bebop/cmd_vel, takeoff, land, reset, flattrim| drv[ros2_bebop_driver]
     drv -->|/bebop/odom| br
+    drv -->|/bebop/altitude| br
     br -->|/bebop1/pose| fm
     br -->|/bebop1/pose| tp
     br -->|/bebop1/pose| pid
@@ -169,6 +172,8 @@ flowchart LR
 | `/goal` | Pose | trajectory_planner o flight_manager | Posición y yaw deseados, marco de despegue |
 | `/goal_vel` | Twist | trajectory_planner | Velocidad del setpoint, para feedforward |
 | `/trajectory_done` | Bool | trajectory_planner | `True` al completar una vuelta |
+| `/trajectory_stalled` | Bool | trajectory_planner | `True` si la órbita lleva `stall_timeout` s detenida |
+| `/bebop/altitude` | Float64 | driver (con parche) | Altura medida sobre el despegue, sonar y barómetro |
 | `/bebop1/pose` | Pose | bridge (real) o Gazebo (sim) | Posición actual, marco de despegue |
 | `/odom_local` | Odometry | bridge | Pose local y velocidad en marco del cuerpo |
 | `/bridge/cmd_vel_raw` | Twist | control_PID (real) | Comando normalizado antes de seguridad |
@@ -205,7 +210,7 @@ El driver no mide posición. Toma la velocidad que reporta el Bebop, estimada co
 - yaw = rumbo antihorario medido desde el Norte, según el magnetómetro.
 - La velocidad del twist viene en marco del cuerpo.
 
-Como la posición es una suma de velocidades, acumula error. En z el error es grande, ver la sección 15.
+Como la posición es una suma de velocidades, acumula error. En z el error es grande, ver la sección 15. Por eso, con el parche del driver, el bridge toma la z de `/bebop/altitude`, que es la altura medida por el Bebop, y solo usa la z integrada si esa altura no llega.
 
 ### Marco de despegue (el que usa todo control_bebop)
 
@@ -303,6 +308,8 @@ En cada ciclo de 20 Hz:
 
 Al completar la órbita, si `auto_land_after_orbit` es verdadero, pasa a RETURN_HOME. Al llegar a home, si `auto_land_on_home` es verdadero, aterriza.
 
+Si recibe `/trajectory_stalled` en AUTOMATIC, pasa a HOVER. Con comando cero el Bebop recupera su hover nativo. Se reanuda con R1 y L2, desde el punto de la órbita donde se quedó.
+
 Parámetros principales: `use_real_drone`, `takeoff_height`, `arena_half_size`, `max_altitude`, `safety_margin`, `deadman_timeout`, `comm_loss_land_timeout`, `takeoff_settle_time`, `landing_settle_time`, `position_tolerance`, `home_x`, `home_y`, `z_geofence_enabled`.
 
 ### 7.2 joystick_interface (`joystick_interface.py`)
@@ -331,6 +338,8 @@ Fases internas:
 | paused | Si se sale de AUTOMATIC a mitad. Al volver, regresa en rampa al punto donde se quedó |
 
 **Seguimiento con freno.** Durante la órbita, θ avanza más lento si el dron se atrasa. Entre `track_err_slow` y `track_err_stop` de error de posición la velocidad baja linealmente hasta detenerse. Lo mismo pasa con el error de yaw entre `yaw_err_slow` y `yaw_err_stop`. Así la vuelta no se da por terminada con el dron atrasado.
+
+**Órbita atascada.** Si θ queda detenido durante `stall_timeout` segundos (3 s), publica `/trajectory_stalled` y el flight_manager pasa a HOVER. Se agregó tras el vuelo del 16 de octubre de 2026: el dron derivó hacia atrás, θ estuvo detenido unos 10 s y el PID siguió mandando comandos pequeños mientras el dron se alejaba. Con esta protección habría pasado a HOVER a los 57 s.
 
 **Modos de yaw.**
 
@@ -371,7 +380,7 @@ Comportamiento por estado:
 
 **Altura (`z_mode`).**
 
-- `native`, para el dron real: gaz = 0 en AUTOMATIC y el Bebop mantiene su altura. Con `native_z_guard: true` se corrige con ±0.2 si el error supera 0.40 m, pero por defecto está desactivado porque la z integrada deriva.
+- `native`, para el dron real: gaz = 0 en AUTOMATIC y el Bebop mantiene su altura. Con `native_z_guard: true` se corrige con ±0.2 si el error supera 0.40 m. Está activo porque la z ya es la altura medida. Si el driver no tiene el parche, hay que desactivarlo: la z integrada deriva.
 - `pid`: lazo PID completo sobre z, como en simulación.
 
 Al cambiar de estado se reinician integradores y feedforward.
@@ -381,6 +390,7 @@ Al cambiar de estado se reinician integradores y feedforward.
 Único punto de contacto con el driver del dron real.
 
 - **Odometría.** Convierte `/bebop/odom` al marco de despegue y publica `/bebop1/pose` y `/odom_local`. El origen se re-ancla cada vez que llega `/bridge/takeoff`.
+- **Altura.** Con `use_altitude_topic: true`, la z de `/bebop1/pose` es `/bebop/altitude` si llegó hace menos de `altitude_timeout` (1 s). Si no, usa la z integrada y avisa cada 5 s.
 - **Comandos.** Guarda el último `/bridge/cmd_vel_raw`. A 20 Hz le suma el trim, lo satura con `max_cmd_xy`, `max_cmd_z` y `max_cmd_yaw`, aplica la geocerca y lo publica en `/bebop/cmd_vel`.
 - **Watchdog.** Si no llega comando en `cmd_timeout` (0.3 s), publica ceros. El Bebop queda en hover nativo aunque el PID se caiga.
 - **Discretos.** `/bridge/takeoff`, `land`, `emergency` y `flattrim` se reenvían a `/bebop/takeoff`, `land`, `reset` y `flattrim`. Ojo: `/bebop/reset` corta motores.
@@ -488,7 +498,9 @@ Si un parámetro aparece en el YAML y en el launch, gana el que se pasa después
 |---|---|---|
 | `arena_x_max` | 2.0 | Mitad del lado del área de vuelo, en m |
 | `max_z` | 2.0 | Techo de la geocerca, si está activa |
-| `z_geofence_enabled` | false | No actuar por altura, porque la z deriva |
+| `z_geofence_enabled` | true | Techo y piso por software, con la altura medida |
+| `use_altitude_topic` | true | z de `/bebop/altitude` en vez de la integrada |
+| `altitude_timeout` | 1.0 | s sin altura antes de volver a la z integrada |
 | `max_cmd_xy` | 0.40 | Pitch y roll máximos enviados |
 | `max_cmd_z` | 0.60 | Gaz máximo |
 | `max_cmd_yaw` | 1.00 | Giro máximo |
@@ -497,13 +509,14 @@ Si un parámetro aparece en el YAML y en el launch, gana el que se pasa después
 
 | Parámetro | Valor | Significado |
 |---|---|---|
-| `kp_xy`, `ki_xy`, `kd_xy` | 0.25, 0.03, 0.60 | Ganancias XY |
+| `kp_xy`, `ki_xy`, `kd_xy` | 0.25, 0.05, 0.60 | Ganancias XY |
+| `int_limit_xy` | 2.0 | Límite del integrador. El integral aporta hasta `ki·int_limit` = 0.10 |
 | `use_measured_velocity` | true | Término D con la velocidad medida |
 | `kp_z`, `ki_z`, `kd_z` | 0.50, 0.02, 0.10 | Solo con `z_mode: pid` |
 | `kp_yaw`, `ki_yaw`, `kd_yaw` | 0.80, 0.0, 0.12 | Ganancias de giro |
 | `max_vel_xy`, `max_vel_z`, `max_vel_yaw` | 0.35, 0.40, 1.00 | Saturaciones del PID |
 | `z_mode` | native | El Bebop mantiene la altura |
-| `native_z_guard` | false | Sin corrección por la z integrada |
+| `native_z_guard` | true | Corrige la altura si se aleja más de 0.40 m. Requiere el parche del driver |
 | `enable_feedforward` | true | Sumar la velocidad del goal |
 | `ff_gain_xy` | 0.20 | Comando por cada m/s pedido |
 | `ff_gain_yaw` | 4.5 | Comando por cada rad/s pedido, aproximadamente 1/0.21 |
@@ -530,6 +543,7 @@ Si un parámetro aparece en el YAML y en el launch, gana el que se pasa después
 | `omega_ramp_time` | 3.0 | s de aceleración de ω |
 | `start_tolerance` | 0.10 | m |
 | `max_yaw_rate` | 0.10 | Límite de ω en lookat |
+| `stall_timeout` | 3.0 | s con la órbita detenida antes de pasar a HOVER. 0 lo desactiva |
 
 Otros parámetros con valor por defecto en el código: `arena_half_size` 1.8 y `safety_margin` 0.20 en el planner, más `track_err_slow` 0.12, `track_err_stop` 0.30, `yaw_err_slow` 0.25 y `yaw_err_stop` 0.60.
 
@@ -541,6 +555,7 @@ Otros parámetros con valor por defecto en el código: `arena_half_size` 1.8 y `
 | `ip` | 192.168.42.1 | IP del Bebop |
 | `launch_gui` | true | Abrir `gui_odometria` |
 | `use_calibration` | false | Cargar `real_drone_calibrated.yaml` |
+| `max_altitude` | 2.0 | Techo de firmware que se manda al driver, solo con `launch_driver:=true` |
 
 El launch también fija para el flight_manager `takeoff_height` 1.0, `arena_half_size` 2.0 y `max_altitude` 2.0.
 
@@ -575,12 +590,12 @@ El mundo `bebop1.sdf` incluye un cilindro y un modelo de objeto en (1.2, 0.3). L
 
 **Preparación, una sola vez:**
 
-1. En FreeFlight, fija la altitud máxima del Bebop en 2 m. Es el techo de seguridad real.
+1. Aplica el parche del driver (`patches/README.md`). El techo de firmware se fija con el parámetro `max_altitude` del driver, 2 m por defecto, y se manda al dron en cada conexión. No hace falta FreeFlight.
 2. Si las distancias reales no coinciden con la odometría, calibra (sección 11.4).
 
 **Antes de cada vuelo:**
 
-1. Área despejada de al menos 4 × 4 m, piso con textura para el flujo óptico y buena luz.
+1. Área despejada de al menos 4 × 4 m y buena luz. El piso necesita textura para el flujo óptico: un piso liso o brillante hace que la odometría no vea la deriva. Si hace falta, pon un tapete con patrón de alto contraste. Vuela lejos de estructuras metálicas.
 2. Batería del dron y del mando cargadas.
 3. Coloca el dron mirando hacia el objeto, con el objeto 1 m al frente, o donde indiquen `target_x` y `target_y`.
 4. Conecta la computadora al Wi-Fi del Bebop.
@@ -588,18 +603,18 @@ El mundo `bebop1.sdf` incluye un cilindro y un modelo de objeto en (1.2, 0.3). L
 **Arranque:**
 
 ```bash
-# Terminal 1: driver
-ros2 launch ros2_bebop_driver bebop_node_launch.xml ip:=192.168.42.1
+# Terminal 1: driver. En el log debe aparecer "MaxAltitude current=2.00 m"
+ros2 launch ros2_bebop_driver bebop_node_launch.xml ip:=192.168.42.1 max_altitude:=2.0
 # Terminal 2: sistema completo, graba un bag automáticamente
 ros2 launch control_bebop real_flight.launch.py
 ```
 
 **Secuencia:**
 
-1. Con el dron en el piso, Share para FlatTrim.
+1. Con el dron en el piso, Share para FlatTrim. Hazlo en cada vuelo.
 2. Sostén L2 y presiona × para despegar. Espera unos 4 s hasta HOVER.
 3. Sostén L2 y presiona R1. El dron va al punto de entrada, se estabiliza y orbita.
-4. **Mantén L2 todo el vuelo.** Si lo sueltas, el dron queda en HOVER.
+4. **Mantén L2 todo el vuelo.** Si lo sueltas, el dron queda en HOVER. Si la órbita se atasca 3 s, también pasa a HOVER: R1 con L2 la reanuda.
 5. Al completar la vuelta regresa a home y aterriza solo. En cualquier momento, ○ aterriza.
 
 **Después:** analiza el bag (sección 11.3).
@@ -620,7 +635,7 @@ Los motores giran en ralentí, el dron no vuela. Sirve para exhibir la telemetr�
 
 | Qué | Ruta | Contenido |
 |---|---|---|
-| Bags de vuelo real | `control_bebop/bags/vuelo_real_<fecha>/` | odom, cmd_vel, pose, odom_local, joy, joy_cmd, flight_state, goal, goal_vel |
+| Bags de vuelo real | `control_bebop/bags/vuelo_real_<fecha>/` | odom, cmd_vel, pose, odom_local, joy, joy_cmd, flight_state, goal, goal_vel, altitude, trajectory_stalled |
 | Bags de simulación | `~/ros2_ws/src/control_bebop/bags/vuelo_sim_<fecha>/` | odom, goal, flight_state, cmd_vel |
 | Bags del modo muestra | `~/ros2_ws/src/control_bebop/bags/` | Odometría, mando, estado de la muestra |
 | Videos | `~/ros2_ws/src/control_bebop/videos/` | AVI de cada vuelo |
@@ -642,13 +657,22 @@ source /opt/ros/humble/setup.bash
 python3 control_bebop/scripts/analisis_bag.py control_bebop/bags/vuelo_real_YYYYMMDD_HHMMSS
 ```
 
-Reporta los estados con sus tiempos, el error de seguimiento en AUTOMATIC, el sobrepaso de la aproximación, los comandos de altura enviados, el giro máximo, la z final en el piso y un modelo identificado del dron con su feedforward sugerido.
+Reporta:
+- Los estados con sus tiempos.
+- El error de seguimiento en AUTOMATIC y el sobrepaso de la aproximación.
+- Los comandos de altura enviados y el giro máximo.
+- Cuánto tiempo estuvo detenido el goal y si se activó la órbita atascada.
+- La z integrada contra `/bebop/altitude`.
+- La posición final según la odometría. Si aterrizaste en el despegue, ese valor es el error acumulado.
+- Un modelo identificado del dron con su feedforward sugerido.
 
 Para ver el vuelo animado:
 
 ```bash
 python3 control_bebop/scripts/replay_vuelo.py <csv o carpeta del bag> [--speed 2] [--static] [--save vuelo.mp4]
 ```
+
+El replay dibuja la posición estimada por la odometría, no la real. Si en el replay el dron aterriza lejos del despegue aunque en realidad aterrizó ahí, la diferencia es error de odometría.
 
 ### 11.4 Calibrar la escala de la odometría
 
@@ -673,7 +697,7 @@ Esta es la diferencia más importante del proyecto.
 | Qué significa el comando | Velocidad en m/s, con un controlador de velocidad interno (`MulticopterVelocityControl`) | Inclinación, que equivale a una aceleración |
 | Respuesta | Rápida, casi sin retardo | Retardo de 0.6 a 0.8 s y respuesta lenta |
 | Posición | Exacta, la da el simulador | Integrada desde velocidades, acumula error |
-| Altura | Exacta | Deriva hasta ~0.9 m por vuelo |
+| Altura | Exacta | Medida por el Bebop en `/bebop/altitude` (con el parche). La z integrada deriva hasta ~1 m por vuelo |
 | Hover | Lo sostiene el PID | Lo hace el autopiloto con comando cero |
 | Despegue y aterrizaje | Los hace el PID | Los hace el autopiloto |
 | Ganancias | Las del launch de simulación | Las de `real_drone.yaml` |
@@ -724,10 +748,10 @@ Capas de protección, de la más alta a la más baja:
 
 1. **Operador:** deadman L2, ○ para aterrizar, L1 + R1 + △ para cortar motores.
 2. **flight_manager:** soltar L2 lleva a HOVER, perder el mando 3 s lleva a aterrizar, salir de la arena lleva a RECOVERY.
-3. **trajectory_planner:** recorta los setpoints a la arena segura.
+3. **trajectory_planner:** recorta los setpoints a la arena segura y, si la órbita se atasca 3 s, pide HOVER.
 4. **control_PID:** saturación de comandos.
-5. **real_drone_bridge:** saturación, geocerca XY y watchdog que manda ceros si el PID deja de publicar.
-6. **Firmware del Bebop:** altitud máxima configurada en FreeFlight y hover nativo con comando cero.
+5. **real_drone_bridge:** saturación, geocerca XY y en z con la altura medida, y watchdog que manda ceros si el PID deja de publicar.
+6. **Firmware del Bebop:** altitud máxima enviada por el driver (`max_altitude`) y hover nativo con comando cero.
 
 Recomendaciones:
 
@@ -741,8 +765,9 @@ Recomendaciones:
 
 | Problema | Efecto | Situación |
 |---|---|---|
-| La z de odometría es velocidad integrada | Tras aterrizar marcó entre −0.31 y +0.92 m | La altura queda al autopiloto y no se usa la z para controlar. El driver no publica la altitud real |
-| La posición XY también acumula error | La órbita se desplaza poco a poco en vuelos largos | Sin corrección. Se puede calibrar la escala |
+| La z de `/bebop/odom` es velocidad integrada | Tras aterrizar marcó entre −0.31 y +1.07 m. El 16 oct mostró 1.78 m volando a ~1 m | Resuelto con el parche del driver: la z sale de `/bebop/altitude` |
+| La posición XY también acumula error | La órbita se desplaza poco a poco. El 16 oct el dron derivó 0.5 a 1.5 m hacia atrás, la odometría marcó ~0.25 m y terminó con 0.86 m de error al aterrizar | Sin corrección de fondo: hace falta una referencia externa de posición. Se mitiga con piso con textura, el integral más fuerte y el HOVER por órbita atascada. Se puede calibrar la escala |
+| Con comando distinto de cero el Bebop no sostiene su posición | Comandos pequeños, de ~0.08, no alcanzan a vencer la deriva | Por eso, si la órbita se atasca, se pasa a HOVER (comando cero) |
 | Magnetómetro en interiores | El yaw y la rotación de velocidades se degradan cerca de metales | En lookat el dron gira 360°, así que influye. Vuela lejos de estructuras metálicas |
 | Video a 15 fps con cámara a ~33 Hz | El AVI se reproduce más lento que el tiempo real | Ajusta `camera_fps` si importa la escala de tiempo |
 | En simulación, `nodo_video` escucha `/bebop/camera/image_raw` | Gazebo publica en otro tópico, así que no se graba video | Hay que remapear `image_topic` en el launch de simulación |

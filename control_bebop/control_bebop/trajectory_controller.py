@@ -92,6 +92,10 @@ class TrajectoryPlanner(Node):
         # Máxima velocidad de giro alcanzable por el dron (rad/s). En lookat
         # el yaw gira a ω, así que ω se limita a este valor.
         self.declare_parameter('max_yaw_rate', 0.15)
+        # Órbita atascada: si θ queda prácticamente detenido (gate < 0.05)
+        # durante este tiempo, publica /trajectory_stalled para que el
+        # flight_manager pase a HOVER (hover nativo del Bebop). 0 = desactivado.
+        self.declare_parameter('stall_timeout', 3.0)
 
         # ── Parámetros del objeto a observar (centro del círculo) ──
         self.declare_parameter('lookat_center', True)
@@ -120,6 +124,7 @@ class TrajectoryPlanner(Node):
         self.yaw_err_slow = self.get_parameter('yaw_err_slow').value
         self.yaw_err_stop = self.get_parameter('yaw_err_stop').value
         self.max_yaw_rate = self.get_parameter('max_yaw_rate').value
+        self.stall_timeout = self.get_parameter('stall_timeout').value
 
         if self.get_parameter('lookat_center').value:
             self.lookat_x = self.target_x
@@ -176,6 +181,7 @@ class TrajectoryPlanner(Node):
         self.pub_goal = self.create_publisher(Pose, '/goal', 10)
         self.pub_goal_vel = self.create_publisher(Twist, '/goal_vel', 10)
         self.pub_done = self.create_publisher(Bool, '/trajectory_done', 10)
+        self.pub_stalled = self.create_publisher(Bool, '/trajectory_stalled', 10)
 
         # ── Subscribers ──
         self.sub_state = self.create_subscription(
@@ -203,6 +209,7 @@ class TrajectoryPlanner(Node):
         self._last_sp = None         # (x, y, z, yaw)
         self._last_gate_log = 0.0
         self._time = 0.0
+        self._stall_time = 0.0       # s seguidos con θ detenido
 
         # ── Timer ──
         self.dt = 1.0 / self.freq
@@ -215,6 +222,7 @@ class TrajectoryPlanner(Node):
     def _set_phase(self, phase):
         self.phase = phase
         self.phase_time = 0.0
+        self._stall_time = 0.0
 
     def _begin_approach(self):
         """Arranca la rampa desde la posición actual hacia el punto theta."""
@@ -359,6 +367,15 @@ class TrajectoryPlanner(Node):
                     f'{math.degrees(e_yaw):.0f}° → ω×{gate:.2f}')
             self.theta += self.omega * ramp * gate * self.dt
             dif = self.theta - self.th_i
+
+            # Órbita atascada: el dron no alcanza el setpoint (deriva)
+            self._stall_time = self._stall_time + self.dt if gate < 0.05 else 0.0
+            if self.stall_timeout > 0.0 and self._stall_time >= self.stall_timeout:
+                self.get_logger().warn(
+                    f'Órbita atascada {self._stall_time:.1f}s (e_pos={e_pos:.2f}m, '
+                    f'e_yaw={math.degrees(e_yaw):.0f}°) → /trajectory_stalled')
+                self._stall_time = 0.0
+                self.pub_stalled.publish(Bool(data=True))
 
             # Detectar órbita completa (soporta omega negativo)
             if abs(dif) >= 2.0 * math.pi:

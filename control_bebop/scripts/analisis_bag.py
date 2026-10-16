@@ -8,7 +8,11 @@ Reporta:
       sobrepaso en la fase de aproximación (primeros segundos de AUTOMATIC).
     - Mensajes con gaz != 0 en AUTOMATIC (con z_mode native debe ser 0).
     - Comando de yaw máximo en AUTOMATIC (saturación de la órbita lookat).
-    - z de odometría al final (en el piso): muestra la deriva de la z integrada.
+    - Tiempo con el goal detenido en AUTOMATIC (órbita frenada por deriva) y
+      avisos de /trajectory_stalled.
+    - z de odometría al final (en el piso): muestra la deriva de la z integrada,
+      y la altura medida /bebop/altitude si el bag la tiene.
+    - XY final de odometría: si se aterrizó en el origen, es el error acumulado.
     - Identificación del modelo pitch → velocidad:  dv/dt = a·u(t-d) - b·v
 
 Uso (después de `source /opt/ros/humble/setup.bash`):
@@ -62,10 +66,13 @@ def load(path):
             p = m.pose.pose
             row = (t, p.position.x, p.position.y, p.position.z,
                    _yaw(p.orientation), m.twist.twist.linear.x, m.twist.twist.linear.y)
+        elif name == '/bebop/odom':
+            p = m.pose.pose
+            row = (t, p.position.x, p.position.y, p.position.z, _yaw(p.orientation))
         elif name in ('/bebop/cmd_vel', '/bridge/cmd_vel_raw', '/goal_vel'):
             row = (t, m.linear.x, m.linear.y, m.linear.z, m.angular.z)
-        elif name == '/flight_state':
-            row = (t, m.data)
+        elif name in ('/flight_state', '/bebop/altitude', '/trajectory_stalled'):
+            row = (t, float(m.data))
         else:
             continue
         data.setdefault(name, []).append(row)
@@ -155,10 +162,38 @@ def main():
                 print(f'  mensajes con gaz != 0: {gaz} (con z_mode native debe ser 0)')
                 print(f'  |yaw| máx enviado: {np.abs(c[mc, 4]).max():.2f}'
                       ' (cerca del límite = órbita saturada)')
+            mg = (goal[:, 0] >= a) & (goal[:, 0] <= b)
+            if mg.sum() > 2:
+                g = goal[mg]
+                dt = np.diff(g[:, 0])
+                v = np.hypot(np.diff(g[:, 1]), np.diff(g[:, 2])) / np.maximum(dt, 1e-3)
+                w = np.abs(np.diff(np.unwrap(g[:, 4]))) / np.maximum(dt, 1e-3)
+                still = dt[(v < 0.005) & (w < 0.005)].sum()
+                print(f'  goal detenido: {still:.1f} s de {b - a:.1f} s '
+                      '(incluye el settling; mucho más = órbita frenada por deriva)')
+            if '/trajectory_stalled' in d:
+                ts = d['/trajectory_stalled']
+                n = int(((ts[:, 0] >= a) & (ts[:, 0] <= b + 0.5)).sum())
+                if n:
+                    print(f'  órbita atascada → HOVER: {n} vez/veces')
 
-    print('\n== Altura de odometría')
-    print(f'  z máx {pose[:, 3].max():.2f} m | z final {pose[-1, 3]:+.2f} m '
-          '(en el piso debería ser ~0: lo demás es deriva de la vz integrada)')
+    print('\n== Altura')
+    if '/bebop/odom' in d:
+        oz = d['/bebop/odom'][:, 3]
+        print(f'  z integrada del driver: máx {oz.max() - oz[0]:.2f} m | final '
+              f'{oz[-1] - oz[0]:+.2f} m (en el piso debería ser ~0: lo demás es deriva)')
+    if '/bebop/altitude' in d:
+        alt = d['/bebop/altitude']
+        print(f'  /bebop/altitude (medida): máx {alt[:, 1].max():.2f} m | '
+              f'final {alt[-1, 1]:+.2f} m')
+    else:
+        print('  Sin /bebop/altitude: driver sin el parche de altura (patches/)')
+    print(f'  z de /bebop1/pose: máx {pose[:, 3].max():.2f} m | final {pose[-1, 3]:+.2f} m')
+
+    print('\n== Posición final (odometría)')
+    print(f'  x {pose[-1, 1]:+.2f} m, y {pose[-1, 2]:+.2f} m, distancia al despegue '
+          f'{math.hypot(pose[-1, 1], pose[-1, 2]):.2f} m')
+    print('  Si aterrizó en el punto de despegue, esto es el error acumulado de la odometría.')
 
     if autos and '/odom_local' in d and '/bebop/cmd_vel' in d:
         a, b = max(autos, key=lambda iv: iv[1] - iv[0])
