@@ -8,6 +8,17 @@ Uso:
     python3 replay_vuelo.py <archivo.csv> [--speed 1.0] [--save salida.mp4|gif]
                                           [--static] [--min-z 0.5]
 """
+import os
+import sys
+
+# Compatibilidad con venvs para rosbags
+for venv in [
+    os.path.expanduser('~/rob_env/lib/python3.12/site-packages'),
+    os.path.expanduser('~/env_dron/lib/python3.12/site-packages'),
+]:
+    if os.path.exists(venv) and venv not in sys.path:
+        sys.path.insert(0, venv)
+
 import argparse
 import csv
 import math
@@ -22,17 +33,83 @@ STATES = {0: 'IDLE', 1: 'AUTOMATIC', 2: 'TAKING_OFF', 3: 'LANDING',
           8: 'RETURN_HOME'}
 
 
+def load_rosbag(path):
+    """Lee un rosbag (.mcap o .db3) usando rosbags si está disponible, con fallback a SQLite."""
+    import glob
+
+    if not os.path.exists(path):
+        matches = glob.glob(path + '*')
+        if matches:
+            path = matches[0]
+        else:
+            raise FileNotFoundError(f"No se encontró el archivo o carpeta: {path}")
+
+    # Si pasaron un archivo .mcap o .db3, localizar el directorio del bag
+    bag_dir = path
+    if os.path.isfile(path):
+        parent = os.path.dirname(path)
+        if os.path.exists(os.path.join(parent, 'metadata.yaml')):
+            bag_dir = parent
+
+    try:
+        from rosbags.rosbag2 import Reader
+        from rosbags.typesys import Stores, get_typestore
+        typestore = get_typestore(Stores.ROS2_HUMBLE)
+
+        out = {'pose': [], 'odom': [], 'goal': [], 'state': [], 'cmd': []}
+        t0 = None
+
+        with Reader(bag_dir) as reader:
+            for connection, timestamp, rawdata in reader.messages():
+                top = connection.topic
+                if top not in ('/bebop1/pose', '/bebop1/odom', '/odom_local', '/bebop/odom',
+                               '/goal', '/flight_state', '/bebop1/cmd_vel', '/bebop/cmd_vel'):
+                    continue
+
+                msg = typestore.deserialize_cdr(rawdata, connection.msgtype)
+                t = timestamp / 1e9
+                if t0 is None:
+                    t0 = t
+                t = t - t0
+
+                if top == '/flight_state':
+                    out['state'].append((t, msg.data))
+                elif top in ('/bebop1/pose', '/goal'):
+                    q = msg.orientation
+                    yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
+                                     1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+                    key = 'pose' if top == '/bebop1/pose' else 'goal'
+                    out[key].append((t, msg.position.x, msg.position.y, msg.position.z, yaw))
+                elif top in ('/bebop1/odom', '/odom_local', '/bebop/odom'):
+                    p = msg.pose.pose.position
+                    q = msg.pose.pose.orientation
+                    yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
+                                     1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+                    out['odom'].append((t, p.x, p.y, p.z, yaw))
+                elif top in ('/bebop1/cmd_vel', '/bebop/cmd_vel'):
+                    out['cmd'].append((t, msg.linear.x, msg.linear.y, msg.linear.z, msg.angular.z))
+
+        arr = lambda L, n: [np.array(c) for c in zip(*L)] if L else [np.array([]) for _ in range(n)]
+        return {
+            'pose': arr(out['pose'], 5),
+            'odom': arr(out['odom'], 5),
+            'goal': arr(out['goal'], 5)[:4],
+            'state': arr(out['state'], 2),
+            'cmd': arr(out['cmd'], 5),
+        }
+    except Exception as e:
+        return load_db3(path)
+
+
 def load_db3(path):
     """Lee directamente un bag .db3 (requiere haber hecho source de ROS 2)."""
     import glob
-    import os
     import sqlite3
     from rclpy.serialization import deserialize_message
     from geometry_msgs.msg import Pose
     from std_msgs.msg import Int32
 
     if not os.path.exists(path):
-        # Intentar buscar como prefijo de directorio en bags/ o en el cwd
         matches = glob.glob(path + '*')
         if matches:
             path = matches[0]
@@ -45,7 +122,6 @@ def load_db3(path):
             raise FileNotFoundError(f"No se encontró ningún archivo .db3 dentro de {path}")
         path = db_files[0]
     elif not path.endswith('.db3'):
-        # Si pasaron un path sin extensión pero apunta a archivo o directorio
         db_files = glob.glob(path + '*.db3')
         if db_files:
             path = db_files[0]
@@ -83,26 +159,28 @@ def load_db3(path):
 
 def load(path):
     if not path.endswith('.csv'):
-        return load_db3(path)
+        return load_rosbag(path)
     rows = list(csv.DictReader(open(path)))
     def col(topic, keys):
         out = [[] for _ in range(len(keys) + 1)]
+        is_seq = isinstance(topic, (list, tuple, set))
         for r in rows:
-            if r['Topico'] != topic:
+            top = r.get('Topico', '')
+            if (top not in topic) if is_seq else (top != topic):
                 continue
             try:
                 vals = [float(r['Tiempo_s'])] + [float(r[k]) for k in keys]
-            except ValueError:
+            except (ValueError, KeyError):
                 continue
             for o, v in zip(out, vals):
                 o.append(v)
         return [np.array(o) for o in out]
     return {
         'pose': col('local_pose', ['X', 'Y', 'Z', 'Yaw']),
-        'odom': col('/bebop/odom', ['X', 'Y', 'Z', 'Yaw']),
+        'odom': col(('/bebop/odom', '/bebop1/odom', '/odom_local'), ['X', 'Y', 'Z', 'Yaw']),
         'goal': col('goal', ['X', 'Y', 'Z']),
         'state': col('state', ['Estado_vuelo']),
-        'cmd': col('/bebop/cmd_vel', ['Vx', 'Vy', 'Vz', 'V_yaw']),
+        'cmd': col(('/bebop/cmd_vel', '/bebop1/cmd_vel'), ['Vx', 'Vy', 'Vz', 'V_yaw']),
     }
 
 
@@ -121,6 +199,10 @@ def main():
     t, x, y, z, yaw = d['pose']
     if len(t) == 0:   # respaldo: odometría cruda
         t, x, y, z, yaw = d['odom']
+    if len(t) == 0:
+        print(f"Error: No se encontraron datos de pose ni odometría en {a.csv}.")
+        print("Asegúrate de que el bag grabó '/bebop1/pose' o '/bebop1/odom'.")
+        return
     yaw = np.unwrap(yaw)
     gt, gx, gy, gz = d['goal']
     st_t, st = d['state']

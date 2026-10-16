@@ -39,6 +39,7 @@ def generate_launch_description():
 
     #Ruta guardado 
     bag_base_dir=os.path.expanduser('~/ros2_ws/src/control_bebop/bags')
+    os.makedirs(bag_base_dir, exist_ok=True)
     timestamp=datetime.now().strftime('%Y%m%d_%H%M%S')
     bag_path = os.path.join(bag_base_dir, f'vuelo_data_{timestamp}')
 
@@ -161,13 +162,18 @@ def generate_launch_description():
         ]
     )
 
-    bag_record = ExecuteProcess(
-        cmd=['ros2','bag','record','-o',bag_path,'/bebop1/odom','/goal','/flight_state', '/bebop1/cmd_vel'], #,'/bebop1/camera/image_raw'
-        output='screen'
-        )
+    # ── 8a. Conversor Pose → Odometría con velocidades ──
+    odom_viewer = Node(
+        package='control_bebop',
+        executable='odom_viewer',
+        name='odom_viewer',
+        output='log',
+        parameters=[
+            {'log_rate': 2.0},
+        ],
+    )
 
-
-    # ── 8. Visor de odometría ──
+    # ── 8b. Visor de odometría (GUI) ──
     gui_odometria = Node(
         package='control_bebop',
         executable='gui_odometria',
@@ -178,6 +184,23 @@ def generate_launch_description():
         parameters=[
             {'frequency': 20.0},
         ]
+    )
+
+    # ── Grabación de datos de vuelo (rosbag sqlite3 / .db3) ──
+    bag_record = ExecuteProcess(
+        cmd=[
+            'ros2', 'bag', 'record',
+            '-s', 'sqlite3',
+            '-o', bag_path,
+            '/bebop1/pose',
+            '/bebop1/odom',
+            '/bebop1/cmd_vel',
+            '/goal',
+            '/flight_state',
+            '/joy',
+            '/joy_cmd',
+        ],
+        output='screen'
     )
 
     # ── 9. Nodo de video ──
@@ -201,7 +224,8 @@ def generate_launch_description():
         joystick_interface,
         controller,
         trajectory,
-        bag_record,
+        odom_viewer,
         gui_odometria,
         video_node,
+        bag_record,
     ])

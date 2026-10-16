@@ -140,7 +140,7 @@ def _build_nodes(context):
             condition=IfCondition(LaunchConfiguration('launch_gui')),
         ),
         ExecuteProcess(
-            cmd=['ros2', 'bag', 'record', '-o', bag_path,
+            cmd=['ros2', 'bag', 'record', '-s', 'sqlite3', '-o', bag_path,
                  '/bebop/odom', '/bebop/cmd_vel', '/bridge/cmd_vel_raw',
                  '/bebop1/pose', '/odom_local', '/joy', '/joy_cmd',
                  '/flight_state', '/goal', '/goal_vel'],
