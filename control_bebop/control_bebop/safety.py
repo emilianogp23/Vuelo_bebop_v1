@@ -33,6 +33,9 @@ class GeofenceParams:
     alt_hard_margin: float = 0.15  # z >= max-hard: fuerza bajar
     push_cmd_z: float = 0.25
     min_altitude: float = 0.4    # z <= min: bloquea bajar (usar 'land')
+    # La z de ros2_bebop_driver es vz integrada y deriva (±0.3–0.9 m por vuelo).
+    # Con False no se toca gaz por altura: el techo real se fija en el firmware.
+    z_enabled: bool = True
 
 
 def apply_geofence(cmd, pose, p):
@@ -72,7 +75,9 @@ def apply_geofence(cmd, pose, p):
     pitch, roll = rotate2d(wx, wy, -yaw)
 
     # Altitud
-    if z >= p.max_altitude - p.alt_hard_margin:
+    if not p.z_enabled:
+        pass
+    elif z >= p.max_altitude - p.alt_hard_margin:
         events.append('techo_forzar_bajar')
         gaz = -abs(p.push_cmd_z)
     elif z >= p.max_altitude - p.alt_soft_margin and gaz > 0.0:

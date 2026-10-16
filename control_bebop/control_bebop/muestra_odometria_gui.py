@@ -22,13 +22,9 @@ import csv
 from datetime import datetime
 import threading
 
-# Asegurar acceso a rob_env donde está instalado ultralytics y torch
-for site_pkg in [
-    '/home/emiliano/rob_env/lib/python3.12/site-packages',
-    os.path.expanduser('~/rob_env/lib/python3.12/site-packages'),
-]:
-    if os.path.exists(site_pkg) and site_pkg not in sys.path:
-        sys.path.insert(0, site_pkg)
+# Entorno virtual ~/rob_env (ultralytics, torch) de la versión de Python actual
+from control_bebop.paths import add_user_venvs, data_dir  # noqa: E402
+add_user_venvs(('rob_env',))
 
 import numpy as np
 import cv2
@@ -1205,7 +1201,8 @@ class MuestraOdometriaGUI(QMainWindow):
     def _export_csv(self):
         path, _ = QFileDialog.getSaveFileName(
             self, "Guardar Trayectoria Odometría",
-            os.path.expanduser(f"~/ros2_ws/src/control_bebop/trayectoria_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"),
+            os.path.join(data_dir('trayectorias'),
+                         f"trayectoria_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"),
             "Archivos CSV (*.csv)"
         )
         if not path:

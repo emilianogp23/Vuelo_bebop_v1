@@ -16,13 +16,9 @@ Qué hace este diagnóstico:
 import sys
 import os
 
-# Asegurar acceso a rob_env donde está instalado ultralytics y torch
-for site_pkg in [
-    '/home/emiliano/rob_env/lib/python3.12/site-packages',
-    os.path.expanduser('~/rob_env/lib/python3.12/site-packages'),
-]:
-    if os.path.exists(site_pkg) and site_pkg not in sys.path:
-        sys.path.insert(0, site_pkg)
+# Entorno virtual ~/rob_env (ultralytics, torch) de la versión de Python actual
+from control_bebop.paths import add_user_venvs  # noqa: E402
+add_user_venvs(('rob_env',))
 
 import time
 import cv2

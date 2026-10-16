@@ -36,10 +36,11 @@
 #include "gz/sim/Model.hh"
 
 using namespace gz;
-using namespace sim;
-using namespace systems;
+using namespace gz::sim;
+using bebop_gz::RobotPosePublisher;
+using bebop_gz::RobotPosePublisherPrivate;
 
-class gz::sim::systems::RobotPosePublisherPrivate
+class bebop_gz::RobotPosePublisherPrivate
 {
   public: void InitializeEntitiesToPublish(const EntityComponentManager &_ecm);
 
@@ -325,10 +326,11 @@ void RobotPosePublisherPrivate::PublishPoses(
     _publisher.Publish(this->poseVMsg);
 }
 
-GZ_ADD_PLUGIN(RobotPosePublisher,
-                    System,
-                    RobotPosePublisher::ISystemConfigure,
-                    RobotPosePublisher::ISystemPostUpdate)
+GZ_ADD_PLUGIN(bebop_gz::RobotPosePublisher,
+              gz::sim::System,
+              gz::sim::ISystemConfigure,
+              gz::sim::ISystemPostUpdate)
 
-GZ_ADD_PLUGIN_ALIAS(RobotPosePublisher,
-                          "gz::sim::systems::RobotPosePublisher")
+// El alias conserva el nombre que usa el SDF
+GZ_ADD_PLUGIN_ALIAS(bebop_gz::RobotPosePublisher,
+                    "gz::sim::systems::RobotPosePublisher")

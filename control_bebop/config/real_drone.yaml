@@ -10,12 +10,24 @@
     arena_y_max: 2.0
     max_cmd_xy: 0.40
     max_cmd_z: 0.60
-    max_cmd_yaw: 0.60
+    # El Bebop gira ~0.21 rad/s por unidad de comando: con 0.60 el máximo era
+    # ~0.126 rad/s y la órbita en lookat pedía 0.12 (sin margen).
+    max_cmd_yaw: 1.00
+    # La z de ros2_bebop_driver es vz integrada: en el piso tras aterrizar
+    # marcó entre -0.31 y +0.92 m. No se usa para forzar gaz ni RECOVERY.
+    # Techo real: configurar la altitud máxima (2 m) en el Bebop con FreeFlight.
+    z_geofence_enabled: false
 
     # ── Ganancias PID (control_PID.py) ────────────────────────
-    kp_xy: 0.70
+    # Identificado en los bags del 13 y 15 oct: pitch/roll ≈ aceleración,
+    # retardo ~0.6–0.8 s, ~1.5–2 m/s por unidad en régimen. Con kp 0.70 /
+    # kd 0.15 el dron oscilaba ±0.45 m (periodo ~6 s). Elegidas con un barrido
+    # sobre 6 modelos identificados (scripts/analisis_bag.py): sobrepaso de la
+    # aproximación 0–0.23 m y error de órbita <=0.10 m en todos.
+    kp_xy: 0.25
     ki_xy: 0.03
-    kd_xy: 0.15
+    kd_xy: 0.60           # D = kd·(v_ref − v_medida) con /odom_local
+    use_measured_velocity: true
     kp_z: 0.50
     ki_z: 0.02
     kd_z: 0.10
@@ -24,17 +36,22 @@
     kd_yaw: 0.12
     max_vel_xy: 0.35
     max_vel_z: 0.40
-    max_vel_yaw: 0.60
+    max_vel_yaw: 1.00
 
     # ── Modo de Altitud Z (solución a baja y sube en Z) ──────
     # 'native': En AUTOMATIC mantiene altura con el sonar/barómetro nativo del Bebop (gaz=0),
     # evitando la deriva de integración del driver que causaba que el dron bajara y subiera.
     # 'pid': Lazo cerrado continuo sobre odometría z.
     z_mode: native
+    # Sin altitud real, no corregir con la z integrada (causaba "baja y sube")
+    native_z_guard: false
 
     # ── Feedforward de velocidad ──────────────────────────────
     enable_feedforward: true
-    ff_gain_xy: 1.25
+    # Antes 1.25: suponía comando ∝ velocidad y en la rampa de aproximación el
+    # dron aceleraba a 0.4 m/s y se pasaba ~0.5 m. El régimen medido sugiere
+    # 0.2–0.6; más alto reduce el error de órbita pero aumenta el sobrepaso.
+    ff_gain_xy: 0.20
     ff_gain_yaw: 4.5
 
     # ── Calibración odometría (se sobreescribe con el calibrado) ─
@@ -47,9 +64,7 @@
     target_x: 1.0          # Centro del círculo (m, marco de despegue)
     target_y: 0.0
     circle_radius: 0.50    # Radio del círculo (m)
-    # circle_speed a 0.12 rad/s (~6.9 deg/s) permite que el yaw del dron
-    # siga perfectamente el centro sin saturar ni atrasarse
-    circle_speed: 0.12
+    circle_speed: 0.10     # vuelta en ~63 s; deja ~50 % de margen de yaw
     yaw_mode: lookat       # orientar el frente del dron hacia el centro
     lookat_center: true    # enfoca automáticamente (target_x, target_y)
     lookat_x: 1.0
@@ -59,4 +74,4 @@
     settle_time: 1.5       # s quieto en el punto de entrada antes de orbitar
     omega_ramp_time: 3.0   # s para acelerar ω de 0 al valor final
     start_tolerance: 0.10
-    max_yaw_rate: 0.20     # rad/s máximo para la trayectoria
+    max_yaw_rate: 0.10     # rad/s; el Bebop logra ~0.21 rad/s con comando 1.0

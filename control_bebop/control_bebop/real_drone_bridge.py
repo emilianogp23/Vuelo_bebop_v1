@@ -30,6 +30,8 @@ class RealDroneBridge(Node):
         self.declare_parameter('max_z', 2.0)
         self.declare_parameter('arena_x_max', 2.0)
         self.declare_parameter('geofence_enabled', True)
+        # False: la geocerca no actúa sobre gaz (la z de odometría deriva)
+        self.declare_parameter('z_geofence_enabled', True)
         # Calibración: soporta tanto nombres antiguos (scale_x) como nuevos (odom_scale_x)
         self.declare_parameter('scale_x', 1.0)
         self.declare_parameter('scale_y', 1.0)
@@ -57,6 +59,7 @@ class RealDroneBridge(Node):
             enabled=gp('geofence_enabled').value,
             half_size=gp('arena_x_max').value,
             max_altitude=gp('max_z').value,
+            z_enabled=gp('z_geofence_enabled').value,
         )
         self.takeoff_frame = TakeoffFrame(
             scale=(sx, sy, 1.0),

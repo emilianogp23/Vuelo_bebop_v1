@@ -31,19 +31,17 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from datetime import datetime
 
+from control_bebop.paths import config_file, data_dir
+
 
 def _build_nodes(context):
     pkg_dir = get_package_share_directory('control_bebop')
     base_cfg = os.path.join(pkg_dir, 'config', 'real_drone.yaml')
     joy_cfg = os.path.join(pkg_dir, 'config', 'ps5_dualsense.yaml')
 
-    # Calibración: se busca en src de Vuelo_bebop_v1, control_bebop o share
-    calib_candidates = [
-        os.path.expanduser('~/ros2_ws/src/Vuelo_bebop_v1/control_bebop/config/real_drone_calibrated.yaml'),
-        os.path.join(pkg_dir, 'config', 'real_drone_calibrated.yaml'),
-        os.path.expanduser('~/ros2_ws/src/control_bebop/config/real_drone_calibrated.yaml'),
-    ]
-    calib_src = next((c for c in calib_candidates if os.path.exists(c)), None)
+    # Calibración: primero config/ del código fuente (la escribe
+    # analisis_deriva) y luego la instalada en share
+    calib_src = config_file('real_drone_calibrated.yaml')
     use_calib = LaunchConfiguration('use_calibration').perform(context).lower() == 'true'
 
     params = [base_cfg]
@@ -56,8 +54,9 @@ def _build_nodes(context):
     # Forzado explícito: NUNCA depender de que el YAML lo traiga
     real = {'use_real_drone': True}
 
-    bag_dir = os.path.expanduser('~/ros2_ws/src/Vuelo_bebop_v1/control_bebop/bags')
-    os.makedirs(bag_dir, exist_ok=True)
+    # control_bebop/bags, relativo al proyecto (ver control_bebop/paths.py)
+    bag_dir = data_dir('bags')
+    print(f'[real_flight] Bag: {bag_dir}')
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     bag_path = os.path.join(bag_dir, f'vuelo_real_{timestamp}')
 

@@ -17,13 +17,10 @@ import time
 import cv2
 import numpy as np
 
-# Asegurar que el entorno virtual 'rob_env' donde está instalado ultralytics y torch esté en sys.path
-for site_pkg in [
-    '/home/emiliano/rob_env/lib/python3.12/site-packages',
-    os.path.expanduser('~/rob_env/lib/python3.12/site-packages'),
-]:
-    if os.path.exists(site_pkg) and site_pkg not in sys.path:
-        sys.path.insert(0, site_pkg)
+from control_bebop.paths import add_user_venvs, config_file, workspace_dir
+
+# Entorno virtual ~/rob_env (ultralytics, torch) de la versión de Python actual
+add_user_venvs(('rob_env',))
 
 try:
     from ultralytics import YOLO
@@ -96,12 +93,19 @@ class YoloPersonDetector:
         if model_path:
             candidate_paths.append(model_path)
 
-        candidate_paths.extend([
-            "/home/emiliano/ros2_ws/src/VeranoUG2026-Optimizador_Trayectoria/controllers/Controlador_principal/yolov8n.pt",
-            "/home/emiliano/ros2_ws/src/VeranoUG2026-Optimizador_Trayectoria/yolov8n.pt",
-            os.path.expanduser("~/ros2_ws/src/control_bebop/config/yolov8n.pt"),
-            "yolov8n.pt",
-        ])
+        # config/yolov8n.pt del paquete y, si existe, el repo del optimizador
+        # en el mismo workspace (rutas relativas, sirven en ambas máquinas)
+        pkg_model = config_file('yolov8n.pt')
+        if pkg_model:
+            candidate_paths.append(pkg_model)
+        ws = workspace_dir()
+        if ws:
+            opt = os.path.join(ws, 'src', 'VeranoUG2026-Optimizador_Trayectoria')
+            candidate_paths.extend([
+                os.path.join(opt, 'controllers', 'Controlador_principal', 'yolov8n.pt'),
+                os.path.join(opt, 'yolov8n.pt'),
+            ])
+        candidate_paths.append("yolov8n.pt")
 
         resolved_path = None
         for p in candidate_paths:

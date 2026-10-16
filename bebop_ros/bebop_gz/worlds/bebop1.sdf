@@ -220,9 +220,11 @@
     </include>
     
 
+    <!-- Objeto de interés en (1.0, 0.0): centro de la órbita, igual que en
+         el vuelo real (1 m al frente del despegue). Ver config/sim.yaml. -->
     <!-- Cilindro -->
     <model name="Cilindro">
-      <pose>1.2 0.3 0.5 0 0 0</pose>
+      <pose>1.0 0.0 0.5 0 0 0</pose>
       <static>true</static>
       <link name="link">
         <pose>0 0 0 0 0 0</pose>
@@ -252,20 +254,20 @@
 
     <!-- Bote de pastillas -->
     <model name="BotePastillas">
-      <pose>1.2 0.3 1.0 0 0 0</pose>
+      <pose>1.0 0.0 1.0 0 0 0</pose>
       <static>true</static>
       <link name="link">
         <visual name="visual">
           <geometry>
             <mesh>
-              <uri>file:///home/emiliano/ros2_ws/src/control_bebop/resource/meshes/5_HTP/meshes/model.obj</uri>
+              <uri>model://5_HTP/meshes/model.obj</uri>
             </mesh>
           </geometry>
         </visual>
         <collision name="collision">
           <geometry>
             <mesh>
-              <uri>file:///home/emiliano/ros2_ws/src/control_bebop/resource/meshes/5_HTP/meshes/model.obj</uri>
+              <uri>model://5_HTP/meshes/model.obj</uri>
             </mesh>
           </geometry>
         </collision>
