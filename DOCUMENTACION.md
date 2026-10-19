@@ -36,7 +36,7 @@ El proyecto busca reconstruir en 3D un objeto de interés usando un dron Parrot 
 3. **NBV (Next Best View).** Se analiza la reconstrucción para encontrar las zonas con poca información y calcular desde dónde convendría verlas.
 4. **Segundo vuelo optimizado.** El dron vuela a esas vistas para completar la reconstrucción.
 
-**Estado actual (octubre 2026):** fase 1, vuelo experimental. Este repositorio contiene el sistema de control de vuelo, la trayectoria circular, la grabación de video y la simulación. La reconstrucción y el NBV todavía no están en el repositorio.
+**Estado actual (octubre 2026):** fase 1, vuelo experimental. Este repositorio contiene el sistema de control de vuelo, la trayectoria circular, la grabación de video y la simulación. Hay un primer pipeline de reconstrucción (fase 2) con COLMAP: ver [control_bebop/RECONSTRUCCION_3D.md](control_bebop/RECONSTRUCCION_3D.md). El NBV todavía no está en el repositorio.
 
 ---
 
@@ -58,7 +58,7 @@ Vuelo_bebop_v1/
     ├── control_bebop/      Código de los nodos
     ├── launch/             Archivos de arranque
     ├── config/             Parámetros YAML
-    ├── scripts/            Herramientas de análisis fuera de ROS
+    ├── scripts/            Herramientas fuera de ROS (análisis de bags, reconstrucción 3D)
     ├── test/               Pruebas unitarias
     ├── resource/meshes/    Modelos 3D de objetos para Gazebo
     └── bags/               Vuelos grabados (no se suben a git)
@@ -413,7 +413,7 @@ Graba la cámara a un archivo AVI (XVID) mientras el dron está en vuelo: estado
 | `camera_fps` | 15 |
 | `output_dir` | `~/ros2_ws/src/control_bebop/videos` |
 
-Este video es la entrada para la reconstrucción 3D.
+Este video es la entrada para la reconstrucción 3D: `python3 control_bebop/scripts/reconstruccion_3d.py <video.avi>` (ver [control_bebop/RECONSTRUCCION_3D.md](control_bebop/RECONSTRUCCION_3D.md)).
 
 ### 7.8 control_camara (`control_camara.py`)
 

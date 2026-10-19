@@ -27,7 +27,8 @@ import sys
 import warnings
 
 PACKAGE = 'control_bebop'
-_SKIP_DIRS = {'build', 'install', 'log', '.git', '__pycache__', 'bags', 'videos'}
+_SKIP_DIRS = {'build', 'install', 'log', '.git', '__pycache__', 'bags', 'videos',
+              'reconstrucciones'}
 _MAX_DEPTH = 4
 
 

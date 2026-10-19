@@ -27,3 +27,12 @@ Para revisar un vuelo:
 source /opt/ros/humble/setup.bash
 python3 scripts/analisis_bag.py bags/vuelo_real_YYYYMMDD_HHMMSS
 ```
+
+## Reconstrucción 3D
+
+Del video de la órbita a una nube de puntos y una malla con COLMAP
+(`sudo apt install colmap`). Detalles en [RECONSTRUCCION_3D.md](RECONSTRUCCION_3D.md).
+
+```bash
+python3 scripts/reconstruccion_3d.py videos/vuelo_YYYYMMDD_HHMMSS.avi
+```
