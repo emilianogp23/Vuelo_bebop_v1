@@ -64,8 +64,9 @@ class OdomGuiNode(Node):
         self.create_subscription(Pose, '/bebop1/pose', self.pose_cb, 10)
         # Suscribir a la odometría para velocidades
         self.create_subscription(Odometry, '/odom_local', self.odom_local_cb, 10)
-        # Backup: odometría directa del driver
+        # Backup: odometría directa del driver o simulación
         self.create_subscription(Odometry, '/bebop/odom', self.bebop_odom_cb, 10)
+        self.create_subscription(Odometry, '/bebop1/odom', self.odom_local_cb, 10)
         # Estado de vuelo
         self.create_subscription(Int32, '/flight_state', self.state_cb, 10)
 

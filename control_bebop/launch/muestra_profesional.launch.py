@@ -29,23 +29,26 @@ from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
+from control_bebop.paths import config_file, data_dir
+
 
 def _build_nodes(context):
     pkg_dir = get_package_share_directory('control_bebop')
     base_cfg = os.path.join(pkg_dir, 'config', 'real_drone.yaml')
     joy_cfg = os.path.join(pkg_dir, 'config', 'ps5_dualsense.yaml')
 
-    calib_src = os.path.expanduser('~/ros2_ws/src/control_bebop/config/real_drone_calibrated.yaml')
+    calib_src = config_file('real_drone_calibrated.yaml')
     use_calib = LaunchConfiguration('use_calibration').perform(context).lower() == 'true'
 
     params = [base_cfg]
-    if use_calib and os.path.exists(calib_src):
+    if use_calib and calib_src:
         params.append(calib_src)
         print(f'[muestra_profesional] Usando calibración: {calib_src}')
 
     real = {'use_real_drone': True}
 
-    bag_dir = os.path.expanduser('~/ros2_ws/src/control_bebop/bags')
+    # control_bebop/bags, relativo al proyecto (ver control_bebop/paths.py)
+    bag_dir = data_dir('bags')
     bag_path = os.path.join(bag_dir, f'muestra_profesional_{int(time.time())}')
 
     nodes = [

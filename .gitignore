@@ -8,3 +8,7 @@ VeranoUG2026-Optimizador_Trayectoria/
 control_bebop/bags/
 control_bebop/videos/
 control_bebop/.pytest_cache/
+control_bebop/trayectorias/
+
+__pycache__/
+*.pyc

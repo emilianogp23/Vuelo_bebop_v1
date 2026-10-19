@@ -81,6 +81,8 @@ class FlightManager(Node):
         self.declare_parameter('takeoff_height', 1.0)
         self.declare_parameter('arena_half_size', 2.0)
         self.declare_parameter('max_altitude', 2.0)
+        # False: no disparar RECOVERY por altura (z de odometría integrada deriva)
+        self.declare_parameter('z_geofence_enabled', True)
         self.declare_parameter('safety_margin', 0.20)
         self.declare_parameter('auto_land_after_orbit', True)
         self.declare_parameter('auto_land_on_home', True)
@@ -99,6 +101,7 @@ class FlightManager(Node):
         self.takeoff_height = self.get_parameter('takeoff_height').value
         self.arena = self.get_parameter('arena_half_size').value
         self.max_alt = self.get_parameter('max_altitude').value
+        self.z_geofence = self.get_parameter('z_geofence_enabled').value
         self.margin = self.get_parameter('safety_margin').value
         self.auto_land_after_orbit = self.get_parameter(
             'auto_land_after_orbit').value
@@ -140,6 +143,8 @@ class FlightManager(Node):
             Pose, '/bebop1/pose', self._pose_callback, 10)
         self.create_subscription(
             Bool, '/trajectory_done', self._trajectory_done_callback, 10)
+        self.create_subscription(
+            Bool, '/trajectory_stalled', self._trajectory_stalled_callback, 10)
 
         # ── Estado interno ────────────────────────────────────
         self.state = IDLE
@@ -421,6 +426,17 @@ class FlightManager(Node):
             else:
                 self._transition_to(HOVER)
 
+    def _trajectory_stalled_callback(self, msg):
+        """Órbita atascada: el dron no alcanza el setpoint (deriva).
+
+        En HOVER el PID manda ceros y el Bebop recupera su hover nativo.
+        Con R1 se reanuda desde el punto de la órbita donde se quedó.
+        """
+        if msg.data and self.state == AUTOMATIC:
+            self.get_logger().warn(
+                '⚠️ Órbita atascada (deriva) → HOVER. R1 con L2 para reanudar')
+            self._transition_to(HOVER)
+
     # ══════════════════════════════════════════════════════════
     #  LOOP PRINCIPAL
     # ══════════════════════════════════════════════════════════
@@ -503,7 +519,7 @@ class FlightManager(Node):
             return
         safe = self.arena - self.margin
         out_of_bounds = (abs(self.current_x) > safe or abs(self.current_y) > safe)
-        too_high = self.current_z > self.max_alt
+        too_high = self.z_geofence and self.current_z > self.max_alt
 
         if out_of_bounds or too_high:
             self.get_logger().warn(
