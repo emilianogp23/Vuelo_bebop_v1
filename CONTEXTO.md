@@ -48,9 +48,7 @@ Tras un vuelo fallido (ver sección 5):
 - Los cambios de arriba no se han probado con el dron real ni en Gazebo (solo pruebas unitarias, compilación y un bridge con datos falsos).
 - El escritorio necesita aplicar el parche al driver y recompilar; si no, poner `native_z_guard` y `z_geofence_enabled` en `false`.
 - Magnetómetro en interiores degrada yaw y rotación de velocidades (en lookat el dron gira 360°).
-- Video grabado a 15 fps con cámara a ~33 Hz: el AVI se reproduce lento.
-- En simulación `nodo_video` no graba (tópico distinto) y el bag de sim graba `/bebop1/odom` que no existe sin `odom_viewer`.
-- Rutas viejas a `~/ros2_ws/src/control_bebop` (videos, bags de sim y muestra) fuera del repositorio. `bebop1.sdf` tiene ruta absoluta `/home/emiliano/...`.
+- Rutas viejas a `~/ros2_ws/src/control_bebop` (videos, bags de sim y muestra) fuera del repositorio.
 - En MANUAL, altura y giro van en la cruceta (todo o nada). `control_camara` choca con el joystick si se lanzan juntos.
 - `consumo_energ.py` es borrador inservible; `control_vuelo.py` está vacío.
 - flake8/pep257 tienen advertencias antiguas.

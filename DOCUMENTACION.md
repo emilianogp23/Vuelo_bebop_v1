@@ -409,9 +409,11 @@ Graba la cámara a un archivo AVI (XVID) mientras el dron está en vuelo: estado
 
 | Parámetro | Defecto |
 |---|---|
-| `image_topic` | `/bebop/camera/image_raw` |
-| `camera_fps` | 15 |
-| `output_dir` | `~/ros2_ws/src/control_bebop/videos` |
+| `image_topic` | `/bebop/camera/image_raw` (en simulación, `sim.yaml` usa el tópico de la cámara de Gazebo) |
+| `camera_fps` | 30 (15 en simulación) |
+| `output_dir` | vacío = `control_bebop/videos` |
+
+`camera_fps` es la frecuencia del AVI, no tiene que coincidir con la de la cámara. Cada cuadro se escribe según su marca de tiempo (`frame_pacer.py`): se repite si la cámara va más lenta y se descarta si va más rápida, así el video dura lo mismo que el vuelo. En Gazebo las marcas son tiempo simulado.
 
 Este video es la entrada para la reconstrucción 3D.
 
@@ -584,7 +586,7 @@ ros2 run control_bebop control_panel
 
 Secuencia: sostén L2, presiona × para despegar, espera HOVER, presiona R1 para la órbita. Al terminar regresa a home y aterriza solo.
 
-El mundo `bebop1.sdf` incluye un cilindro y un modelo de objeto en (1.2, 0.3). La ruta del modelo está escrita para la computadora de escritorio (`/home/emiliano/...`), así que en otra computadora puede no aparecer.
+El mundo `bebop1.sdf` incluye un cilindro y un bote de pastillas en (1.0, 0.0). El bote se carga como `model://5_HTP` desde `control_bebop/resource/meshes`, que los launches agregan a la ruta de recursos de Gazebo. `nodo_video` graba la cámara del dron durante el vuelo en `control_bebop/videos`.
 
 ### 10.3 Dron real
 
@@ -769,11 +771,8 @@ Recomendaciones:
 | La posición XY también acumula error | La órbita se desplaza poco a poco. El 16 oct el dron derivó 0.5 a 1.5 m hacia atrás, la odometría marcó ~0.25 m y terminó con 0.86 m de error al aterrizar | Sin corrección de fondo: hace falta una referencia externa de posición. Se mitiga con piso con textura, el integral más fuerte y el HOVER por órbita atascada. Se puede calibrar la escala |
 | Con comando distinto de cero el Bebop no sostiene su posición | Comandos pequeños, de ~0.08, no alcanzan a vencer la deriva | Por eso, si la órbita se atasca, se pasa a HOVER (comando cero) |
 | Magnetómetro en interiores | El yaw y la rotación de velocidades se degradan cerca de metales | En lookat el dron gira 360°, así que influye. Vuela lejos de estructuras metálicas |
-| Video a 15 fps con cámara a ~33 Hz | El AVI se reproduce más lento que el tiempo real | Ajusta `camera_fps` si importa la escala de tiempo |
-| En simulación, `nodo_video` escucha `/bebop/camera/image_raw` | Gazebo publica en otro tópico, así que no se graba video | Hay que remapear `image_topic` en el launch de simulación |
 | El bag de simulación graba `/bebop1/odom` | Ese tópico solo existe si corre `odom_viewer` | Graba `/bebop1/pose` en su lugar |
 | Rutas a `~/ros2_ws/src/control_bebop` | Videos, bags de simulación y del modo muestra quedan fuera del repositorio | Pendiente de unificar |
-| Ruta absoluta `/home/emiliano/...` en `bebop1.sdf` | El objeto no aparece en otras computadoras | Usar una ruta `model://` |
 | Altura y giro en la cruceta | Control todo o nada en MANUAL | Ver la sección 8 |
 | `control_camara` también usa la cruceta | Si corre con el joystick, mover la cámara también mueve el dron | No lanzarlos juntos sin cambiar el mapeo |
 | Nombres distintos para el mismo nodo | `trajectory_controller.py`, ejecutable `trajectory_planner`, nodo `trajectory_controller` | Solo es confuso |
