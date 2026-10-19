@@ -1,0 +1,60 @@
+# Parámetros de SIMULACIÓN, compartidos por los dos launches:
+#   sim_flight_humble.launch.py  → laptop     (ROS 2 Humble + Gazebo Fortress)
+#   main_flight.launch.py        → escritorio (ROS 2 Jazzy  + Gazebo Harmonic)
+# Cambia aquí y ambas máquinas quedan iguales. Para el dron real se usa
+# real_drone.yaml: en Gazebo el comando es velocidad (m/s) y en el Bebop real
+# es inclinación, así que las ganancias NO son intercambiables.
+
+flight_manager:
+  ros__parameters:
+    use_real_drone: false
+    takeoff_height: 1.0
+    arena_half_size: 1.8
+    safety_margin: 0.15
+    auto_land_after_orbit: true
+    auto_land_on_home: true
+    deadman_timeout: 0.5
+    landing_rate: 0.3
+    position_tolerance: 0.15
+    touchdown_z: 0.08
+    frequency: 20.0
+    home_x: 0.0
+    home_y: 0.0
+
+control_PID:
+  ros__parameters:
+    use_real_drone: false
+    cmd_vel_topic: /bebop1/cmd_vel
+    takeoff_height: 1.0
+    arena_limit: 1.8
+    max_vel_xy: 0.5
+    max_vel_z: 1.0
+    max_vel_yaw: 0.5
+    z_mode: pid           # en Gazebo la altura es exacta
+
+trajectory_planner:
+  ros__parameters:
+    # Mismo montaje que el vuelo real: objeto 1 m al frente del despegue.
+    # El cilindro y el bote del mundo bebop1.sdf están en (1.0, 0.0).
+    target_x: 1.0
+    target_y: 0.0
+    circle_radius: 0.50
+    circle_height: 1.0
+    hold_entry_altitude: false
+    circle_speed: 0.15
+    max_yaw_rate: 0.15
+    yaw_mode: lookat      # la cámara mira siempre al objeto
+    lookat_center: true
+    lookat_z: 1.025       # altura del bote de pastillas
+    arena_half_size: 1.8
+    safety_margin: 0.15
+
+gui_odometria:
+  ros__parameters:
+    frequency: 20.0
+
+nodo_video:
+  ros__parameters:
+    camera_fps: 15.0      # update_rate de la cámara del modelo parrot_bebop_2
+    image_topic: /world/bebop/model/bebop1/link/body/sensor/rgb_camera_sensor/image
+    output_dir: ''        # vacío = control_bebop/videos

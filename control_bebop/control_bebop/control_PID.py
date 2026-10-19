@@ -8,6 +8,8 @@ Suscribe:
                                            marco de despegue; opcional)
     /flight_state (std_msgs/Int32)       ← Estado del sistema
     /joy_cmd      (geometry_msgs/Twist)  ← Comandos de joystick para modo manual
+    /odom_local   (nav_msgs/Odometry)    ← Velocidad medida (marco cuerpo, solo
+                                           dron real vía real_drone_bridge)
 
 Publica:
     /bebop1/cmd_vel (geometry_msgs/Twist) ← Velocidades al dron (o al bridge)
@@ -17,8 +19,14 @@ aproximadamente proporcional (medido en vuelos: ~0.8 m/s por unidad en
 pitch, ~0.55 en roll, retardo ~0.6 s) y a yaw con ~0.21 rad/s por unidad.
 cmd_ff = v_ref * ff_gain, en marco del cuerpo.
 
+Término D en XY:
+    Con /odom_local reciente: D = kd * (v_ref - v_medida), usando la velocidad
+    que reporta el Bebop (no se deriva la posición, que llega a 15 Hz con
+    ~50 % de muestras repetidas).
+    Sin /odom_local (simulador): D = -kd * d(posición)/dt filtrada, como antes.
+
 z_mode:
-    native : gaz = 0 en vuelo automático mientras la altitud esté en zona segura.
+    native : gaz = 0 en vuelo automático (con native_z_guard=False, siempre).
              El Bebop mantiene su altura nativamente con su sonar y barómetro.
              Recomendado con ros2_bebop_driver, cuya z es velocidad vertical INTEGRADA
              (acumula deriva y hace que el PID baje y suba erróneamente).
@@ -29,7 +37,10 @@ import math
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Pose, Twist
+from nav_msgs.msg import Odometry
 from std_msgs.msg import Int32
+
+from .frames import rotate2d
 
 
 # ── Estados (deben coincidir con flight_manager.py) ───────────
@@ -149,9 +160,11 @@ class PID():
         self.error_altitud = error_actual
         return comando_z
 
-    def control_roll(self, roll_obj, roll_act, dt):
+    def control_roll(self, roll_obj, roll_act, dt, vel=None, vel_ref=0.0):
         error_actual = roll_obj - roll_act
         error_derivado = self._meas_derivative('y', roll_act, dt)
+        if vel is not None:
+            error_derivado = vel_ref - vel
         self.integrador_roll = clamp(
             self.integrador_roll + error_actual * dt, -self.int_limit_xy, self.int_limit_xy)
         comando_y = (
@@ -162,9 +175,11 @@ class PID():
         self.error_roll = error_actual
         return comando_y
 
-    def control_pitch(self, pitch_obj, pitch_act, dt):
+    def control_pitch(self, pitch_obj, pitch_act, dt, vel=None, vel_ref=0.0):
         error_actual = pitch_obj - pitch_act
         error_derivado = self._meas_derivative('x', pitch_act, dt)
+        if vel is not None:
+            error_derivado = vel_ref - vel
         self.integrador_pitch = clamp(
             self.integrador_pitch + error_actual * dt, -self.int_limit_xy, self.int_limit_xy)
         comando_x = (
@@ -225,6 +240,16 @@ class DroneController(Node):
 
         # Modo de altitud Z ('native' recomendado para dron real con ros2_bebop_driver)
         self.declare_parameter('z_mode', 'native')
+        # True: en native, corrige con gaz ±0.2 si |err_z| > 0.40 m. Solo tiene
+        # sentido con una altitud real; la z de ros2_bebop_driver es vz
+        # integrada y deriva hasta ~0.9 m por vuelo (baja al dron sin motivo).
+        self.declare_parameter('native_z_guard', False)
+
+        # Velocidad medida para el término D (de /odom_local)
+        self.declare_parameter('use_measured_velocity', True)
+        self.declare_parameter('velocity_timeout', 0.3)
+        self.declare_parameter('scale_x', 1.0)
+        self.declare_parameter('scale_y', 1.0)
 
         # Asignar ganancias a la clase PID
         self.pid.kp_pitch = self.get_parameter('kp_xy').value
@@ -249,6 +274,11 @@ class DroneController(Node):
         self.ff_gain_xy = self.get_parameter('ff_gain_xy').value
         self.ff_gain_yaw = self.get_parameter('ff_gain_yaw').value
         self.z_mode = str(self.get_parameter('z_mode').value).lower()
+        self.native_z_guard = self.get_parameter('native_z_guard').value
+        self.use_meas_vel = self.get_parameter('use_measured_velocity').value
+        self.vel_timeout = self.get_parameter('velocity_timeout').value
+        self.scale_x = self.get_parameter('scale_x').value
+        self.scale_y = self.get_parameter('scale_y').value
 
         # Publicadores
         topic_name = self.get_parameter('cmd_vel_topic').value
@@ -265,6 +295,8 @@ class DroneController(Node):
             Int32, '/flight_state', self.state_callback, 10)
         self.sub_joy = self.create_subscription(
             Twist, '/joy_cmd', self.joy_callback, 10)
+        self.sub_odom_local = self.create_subscription(
+            Odometry, '/odom_local', self.odom_local_callback, 10)
 
         # Variables de estado
         self.x_actual = 0.0
@@ -273,6 +305,10 @@ class DroneController(Node):
         self.yaw_actual = 0.0
         self.yaw_rate = 0.0  # Estimación de velocidad angular yaw
         self._last_odom_stamp = None
+        # Velocidad medida en marco del cuerpo (de /odom_local)
+        self.vx_body = 0.0
+        self.vy_body = 0.0
+        self._last_vel_time = None
 
         self.setpoint_x = 0.0
         self.setpoint_y = 0.0
@@ -296,11 +332,29 @@ class DroneController(Node):
 
         self.get_logger().info(
             f'⚙️ Control PID iniciado — Publicando en: {topic_name} | '
-            f'z_mode={self.z_mode} | feedforward={self.enable_ff}'
+            f'z_mode={self.z_mode} | feedforward={self.enable_ff} | '
+            f'D con velocidad medida={self.use_meas_vel}'
         )
 
     def joy_callback(self, msg):
         self.manual_joy = msg
+
+    def odom_local_callback(self, msg):
+        self.vx_body = msg.twist.twist.linear.x
+        self.vy_body = msg.twist.twist.linear.y
+        self._last_vel_time = self.get_clock().now()
+
+    def _measured_world_velocity(self, now):
+        """Velocidad (vx, vy) en marco de despegue, o None si no es reciente."""
+        if not self.use_meas_vel or self._last_vel_time is None:
+            return None
+        age = (now - self._last_vel_time).nanoseconds * 1e-9
+        if age > self.vel_timeout:
+            return None
+        # El twist del driver está en marco del cuerpo: rotarlo por el yaw
+        # local (misma corrección que TakeoffFrame.body_vel_to_local).
+        wx, wy = rotate2d(self.vx_body, self.vy_body, self.yaw_actual)
+        return wx * self.scale_x, wy * self.scale_y
 
     def goal_vel_callback(self, msg):
         self.goal_vx = msg.linear.x
@@ -411,11 +465,18 @@ class DroneController(Node):
             self.goal_vz = 0.0
             self.goal_vyaw = 0.0
 
-        # Control PID en posición
-        comando_roll = self.pid.control_roll(
-            self.setpoint_y, self.y_actual, dt)
-        comando_pitch = self.pid.control_pitch(
-            self.setpoint_x, self.x_actual, dt)
+        # Control PID en posición (D sobre error de velocidad si hay medición)
+        vel = self._measured_world_velocity(now)
+        if vel is not None:
+            comando_roll = self.pid.control_roll(
+                self.setpoint_y, self.y_actual, dt, vel[1], self.goal_vy)
+            comando_pitch = self.pid.control_pitch(
+                self.setpoint_x, self.x_actual, dt, vel[0], self.goal_vx)
+        else:
+            comando_roll = self.pid.control_roll(
+                self.setpoint_y, self.y_actual, dt)
+            comando_pitch = self.pid.control_pitch(
+                self.setpoint_x, self.x_actual, dt)
         comando_yaw = self.pid.control_yaw(
             self.setpoint_yaw, self.yaw_actual, dt, self.yaw_rate)
 
@@ -426,9 +487,9 @@ class DroneController(Node):
         if (self.get_parameter('use_real_drone').value
                 and self.z_mode == 'native'
                 and self.estado == AUTOMATIC):
-            # Seguridad: si se desvía más de 0.40m respecto al setpoint, intervenir suavemente
+            # Seguridad opcional: solo con una altitud fiable (native_z_guard)
             err_z = self.setpoint_z - self.z_actual
-            if abs(err_z) > 0.40:
+            if self.native_z_guard and abs(err_z) > 0.40:
                 comando_z = clamp(err_z * self.pid.kp, -0.20, 0.20)
             else:
                 comando_z = 0.0

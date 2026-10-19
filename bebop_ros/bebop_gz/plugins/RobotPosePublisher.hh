@@ -1,17 +1,16 @@
-#ifndef GZ_SIM_SYSTEMS_ROBOTPOSEPUBLISHER_HH_
-#define GZ_SIM_SYSTEMS_ROBOTPOSEPUBLISHER_HH_
+#ifndef BEBOP_GZ_ROBOTPOSEPUBLISHER_HH_
+#define BEBOP_GZ_ROBOTPOSEPUBLISHER_HH_
 
 #include <memory>
 #include <gz/sim/config.hh>
 #include <gz/sim/System.hh>
 
-namespace gz
+#include "gz_compat.hh"
+
+// Espacio de nombres propio (ver SetPosePlugin.hh).
+namespace bebop_gz
 {
-namespace sim
-{
-inline namespace GZ_SIM_VERSION_NAMESPACE {
-namespace systems
-{
+using namespace gz::sim;
   class RobotPosePublisherPrivate;
 
   /// \brief Pose publisher system. Attach to an entity to publish the
@@ -46,9 +45,6 @@ namespace systems
 
     private: std::unique_ptr<RobotPosePublisherPrivate> dataPtr;
   };
-}
-}
-}
-}
+}  // namespace bebop_gz
 
-#endif
+#endif  // BEBOP_GZ_ROBOTPOSEPUBLISHER_HH_

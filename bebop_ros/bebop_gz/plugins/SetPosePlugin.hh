@@ -1,5 +1,7 @@
-#ifndef GZ_SIM_SYSTEMS_SETPOSEPLUGIN_HH_
-#define GZ_SIM_SYSTEMS_SETPOSEPLUGIN_HH_
+#ifndef BEBOP_GZ_SETPOSEPLUGIN_HH_
+#define BEBOP_GZ_SETPOSEPLUGIN_HH_
+
+#include "gz_compat.hh"
 
 #include <gz/sim/Model.hh>
 #include <gz/sim/System.hh>
@@ -13,12 +15,11 @@
 #include <mutex>
 #include <optional>
 
-namespace gz
+// Espacio de nombres propio: en Fortress gz::sim es solo un alias de
+// ignition::gazebo y no admite declarar clases nuevas dentro de él.
+namespace bebop_gz
 {
-namespace sim
-{
-namespace systems
-{
+using namespace gz::sim;
 
 class SetPosePlugin : public System, public ISystemConfigure, public ISystemPreUpdate
 {
@@ -46,8 +47,6 @@ private:
   std::mutex mutex; // Mutex to protect access to newPose
 };
 
-} // namespace systems
-} // namespace sim
-} // namespace gz
+} // namespace bebop_gz
 
-#endif // GZ_SIM_SYSTEMS_SETPOSEPLUGIN_HH_
+#endif // BEBOP_GZ_SETPOSEPLUGIN_HH_

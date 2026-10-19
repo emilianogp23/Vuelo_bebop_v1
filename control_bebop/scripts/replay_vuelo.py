@@ -158,11 +158,11 @@ def main():
                  max(y.max(), gy.max() if len(gy) else 0) + pad)
     axx.set_aspect('equal'); axx.grid(True)
     axx.set_xlabel('X (m)'); axx.set_ylabel('Y (m)')
-    axx.set_title('Vista superior (marco de despegue)')
+    axx.set_title('Vista superior (posición estimada por odometría)')
     if len(gx):
         axx.plot(gx, gy, 'g.', ms=2, alpha=.4, label='Setpoints /goal')
     axx.plot(0, 0, 'k^', ms=10, label='Despegue')
-    path_l, = axx.plot([], [], 'm-', lw=1.8, label='Trayectoria')
+    path_l, = axx.plot([], [], 'm-', lw=1.8, label='Trayectoria (odometría)')
     dot, = axx.plot([], [], 'mo', ms=8)
     arrow = [None]
     axx.legend(loc='upper left', fontsize=8)
@@ -171,7 +171,7 @@ def main():
     if len(gz):
         axz.plot(gt, gz, 'g--', alpha=.5, label='Z goal')
     axz.axhline(a.min_z, color='r', ls=':', label=f'{a.min_z} m')
-    zl, = axz.plot([], [], 'b-', lw=1.8, label='Z real')
+    zl, = axz.plot([], [], 'b-', lw=1.8, label='Z de /bebop1/pose')
     axz.set_ylabel('Z (m)'); axz.grid(True); axz.legend(fontsize=7)
     axy.plot(t, np.degrees(yaw), 'k-', alpha=.25)
     yl, = axy.plot([], [], 'k-', lw=1.8)

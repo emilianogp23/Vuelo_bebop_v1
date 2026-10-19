@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 import sys
 import os
-# Compatibilidad con venvs (rosbags instalado en el venv del usuario)
-for p in [os.path.expanduser('~/env_dron/lib/python3.10/site-packages'),
-          os.path.expanduser('~/env_dron/lib/python3.12/site-packages')]:
-    if os.path.exists(p) and p not in sys.path:
-        sys.path.append(p)
+from control_bebop.paths import add_user_venvs, source_config_path
+
+# rosbags puede estar en ~/env_dron o ~/rob_env (versión de Python actual)
+add_user_venvs(('env_dron', 'rob_env'), prepend=False)
 
 import argparse
 import numpy as np
@@ -87,10 +86,9 @@ def main():
         print("⚠️  Escala fuera de [0.5, 2.0]: revisa la medición; NO se guarda.")
         return
 
-    # Generar YAML en el paquete real (Vuelo_bebop_v1)
-    src_yaml = os.path.expanduser(
-        '~/ros2_ws/src/Vuelo_bebop_v1/control_bebop/config/real_drone_calibrated.yaml')
-    yaml_path = os.path.abspath(src_yaml)
+    # Generar YAML en config/ del código fuente del paquete (sirve en ambas
+    # máquinas sin importar dónde esté clonado el repositorio)
+    yaml_path = source_config_path('real_drone_calibrated.yaml')
 
     # Solo corrección de odometría: las ganancias y la trayectoria
     # se quedan en real_drone.yaml para no sobreescribirlas sin probar.

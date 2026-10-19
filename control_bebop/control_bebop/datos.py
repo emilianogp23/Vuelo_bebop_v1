@@ -2,10 +2,10 @@ import os
 import sys 
 import csv
 
-# Asegurar acceso a paquetes de rob_env si se ejecuta desde /usr/bin/ros2
-venv_site = os.path.expanduser('~/rob_env/lib/python3.12/site-packages')
-if os.path.exists(venv_site) and venv_site not in sys.path:
-    sys.path.insert(0, venv_site)
+from control_bebop.paths import add_user_venvs
+
+# rosbags puede estar en ~/rob_env o ~/env_dron (versión de Python actual)
+add_user_venvs()
 
 from rosbags.rosbag2 import Reader
 from rosbags.typesys import Stores, get_typestore

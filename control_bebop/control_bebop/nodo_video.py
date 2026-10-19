@@ -17,6 +17,8 @@ Fixes aplicados vs versión anterior:
 import os
 from datetime import datetime
 
+from control_bebop.paths import data_dir
+
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
@@ -40,12 +42,12 @@ class NodoVideo(Node):
         self.declare_parameter('camera_fps', 15.0)
         self.declare_parameter(
             'image_topic', '/bebop/camera/image_raw')
-        self.declare_parameter('output_dir',
-                               os.path.expanduser(
-                                   '~/ros2_ws/src/control_bebop/videos'))
+        # Vacío = <paquete>/videos (relativo al proyecto, ver paths.py)
+        self.declare_parameter('output_dir', '')
 
         self.fps = self.get_parameter('camera_fps').value
-        self.output_dir = self.get_parameter('output_dir').value
+        self.output_dir = (self.get_parameter('output_dir').value
+                           or data_dir('videos'))
         topic_name = self.get_parameter('image_topic').value
 
         # ── QoS compatible con driver real y simulador ────────

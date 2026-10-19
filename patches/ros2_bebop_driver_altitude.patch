@@ -1,0 +1,284 @@
+diff --git a/include/ros2_bebop_driver/ardrone3_state_callbacks.hpp b/include/ros2_bebop_driver/ardrone3_state_callbacks.hpp
+index 51d0738..ecca8c5 100644
+--- a/include/ros2_bebop_driver/ardrone3_state_callbacks.hpp
++++ b/include/ros2_bebop_driver/ardrone3_state_callbacks.hpp
+@@ -70,4 +70,31 @@ class Ardrone3PilotingStateSpeedChanged {
+     std::tuple<std::string, time_point, float, float, float> get(void) const;
+ };
+ 
++class Ardrone3PilotingStateAltitudeChanged {
++   private:
++    ARCONTROLLER_DICTIONARY_ARG_t* arg;
++    mutable std::mutex mutex;
++    double altitude;  // m above the takeoff point (sonar + barometer)
++    time_point time;  // The time of the last update
++
++   public:
++    Ardrone3PilotingStateAltitudeChanged();
++    void set(const ARCONTROLLER_DICTIONARY_ARG_t* arguments);
++    std::tuple<time_point, double> get(void) const;
++};
++
++class Ardrone3PilotingSettingsStateMaxAltitudeChanged {
++   private:
++    ARCONTROLLER_DICTIONARY_ARG_t* arg;
++    mutable std::mutex mutex;
++    std::tuple<float, float, float> current_min_max;
++    bool received = false;
++
++   public:
++    Ardrone3PilotingSettingsStateMaxAltitudeChanged();
++    void set(const ARCONTROLLER_DICTIONARY_ARG_t* arguments);
++    // (received, current, min, max)
++    std::tuple<bool, float, float, float> get(void) const;
++};
++
+ }  // namespace bebop_driver
+diff --git a/include/ros2_bebop_driver/bebop.hpp b/include/ros2_bebop_driver/bebop.hpp
+index 4bfe370..43bb82b 100644
+--- a/include/ros2_bebop_driver/bebop.hpp
++++ b/include/ros2_bebop_driver/bebop.hpp
+@@ -92,6 +92,10 @@ class Bebop {
+     Ardrone3PilotingStateAttitudeChanged
+ 	ardrone3_piloting_state_attitude_changed;
+     Ardrone3PilotingStateSpeedChanged ardrone3_piloting_state_speed_changed;
++    Ardrone3PilotingStateAltitudeChanged
++	ardrone3_piloting_state_altitude_changed;
++    Ardrone3PilotingSettingsStateMaxAltitudeChanged
++	ardrone3_piloting_settings_state_max_altitude_changed;
+ 
+    public:
+     Bebop();
+@@ -109,6 +113,7 @@ class Bebop {
+     void move(double roll, double pitch, double gaz_speed, double yaw_speed);
+     void moveCamera(double titl, double pan);
+     void photo(bool on);
++    void setMaxAltitude(float max_altitude);
+ 
+     void startStreaming(void);
+     void stopStreaming(void);
+@@ -124,6 +129,14 @@ class Bebop {
+     auto getArdrone3PilotingStateSpeed() const {
+ 	return ardrone3_piloting_state_speed_changed.get();
+     };
++    /* std::tuple<time_point, double> */
++    auto getArdrone3PilotingStateAltitude() const {
++	return ardrone3_piloting_state_altitude_changed.get();
++    };
++    /* std::tuple<bool, float, float, float> */
++    auto getArdrone3PilotingSettingsStateMaxAltitude() const {
++	return ardrone3_piloting_settings_state_max_altitude_changed.get();
++    };
+ 
+     void throwOnInternalError(const std::string& message);
+     void throwOnCtrlError(const eARCONTROLLER_ERROR& error,
+diff --git a/include/ros2_bebop_driver/bebop_driver_node.hpp b/include/ros2_bebop_driver/bebop_driver_node.hpp
+index 11252f4..b8f66f5 100644
+--- a/include/ros2_bebop_driver/bebop_driver_node.hpp
++++ b/include/ros2_bebop_driver/bebop_driver_node.hpp
+@@ -41,6 +41,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ #include <rclcpp/rclcpp.hpp>
+ #include <std_msgs/msg/bool.hpp>
+ #include <std_msgs/msg/empty.hpp>
++#include <std_msgs/msg/float64.hpp>
+ #include <std_msgs/msg/u_int8.hpp>
+ 
+ #include "ros2_bebop_driver/bebop.hpp"
+@@ -75,6 +76,10 @@ class BebopDriverNode : public rclcpp::Node {
+     std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster;
+     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr publisher_odometry;
+     rclcpp::TimerBase::SharedPtr odom_timer;
++    // Altitude above takeoff reported by the Bebop (sonar + barometer)
++    rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr publisher_altitude;
++    double max_altitude;
++    bool max_altitude_logged = false;
+ 
+     void publishCamera(void);
+     void publishOdometry(void);
+diff --git a/launch/bebop_node_launch.xml b/launch/bebop_node_launch.xml
+index 2aa43f5..5b72bfb 100644
+--- a/launch/bebop_node_launch.xml
++++ b/launch/bebop_node_launch.xml
+@@ -1,8 +1,10 @@
+ <launch>
+ 	<arg name="namespace" default="bebop"/>
+ 	<arg name="ip" default="192.168.42.1"/>
++	<arg name="max_altitude" default="2.0"/>
+ 	<node pkg="ros2_bebop_driver" exec="bebop_driver" name="bebop_driver" output="screen" namespace="$(var namespace)">
+ 		<param name="bebop_ip" value="$(var ip)"/>
++		<param name="max_altitude" value="$(var max_altitude)"/>
+ 		<param name="camera_calibration_file" value="package://ros2_bebop_driver/config/bebop2_camera_calib.yaml"/>
+ 	</node>
+ </launch>
+diff --git a/src/ardrone3_state_callbacks.cpp b/src/ardrone3_state_callbacks.cpp
+index e9104e4..15634f4 100644
+--- a/src/ardrone3_state_callbacks.cpp
++++ b/src/ardrone3_state_callbacks.cpp
+@@ -115,4 +115,64 @@ Ardrone3PilotingStateSpeedChanged ::get(void) const {
+     return std::tuple_cat(std::make_tuple(frame_id, time),
+ 			  speedx_speedy_speedz);
+ }
++
++Ardrone3PilotingStateAltitudeChanged::Ardrone3PilotingStateAltitudeChanged()
++    : altitude(0.0) {}
++
++void Ardrone3PilotingStateAltitudeChanged::set(
++    const ARCONTROLLER_DICTIONARY_ARG_t *arguments) {
++    std::unique_lock<std::mutex> lock(mutex);
++    time = clock_type::now();
++
++    arg = NULL;
++    HASH_FIND_STR(
++	arguments,
++	ARCONTROLLER_DICTIONARY_KEY_ARDRONE3_PILOTINGSTATE_ALTITUDECHANGED_ALTITUDE,
++	arg);
++    if (arg) altitude = arg->value.Double;
++}
++
++std::tuple<time_point, double> Ardrone3PilotingStateAltitudeChanged::get(
++    void) const {
++    std::unique_lock<std::mutex> lock(mutex);
++    return std::make_tuple(time, altitude);
++}
++
++Ardrone3PilotingSettingsStateMaxAltitudeChanged::
++    Ardrone3PilotingSettingsStateMaxAltitudeChanged() {
++    std::get<0>(current_min_max) = 0;
++    std::get<1>(current_min_max) = 0;
++    std::get<2>(current_min_max) = 0;
++}
++
++void Ardrone3PilotingSettingsStateMaxAltitudeChanged::set(
++    const ARCONTROLLER_DICTIONARY_ARG_t *arguments) {
++    std::unique_lock<std::mutex> lock(mutex);
++    received = true;
++
++    arg = NULL;
++    HASH_FIND_STR(
++	arguments,
++	ARCONTROLLER_DICTIONARY_KEY_ARDRONE3_PILOTINGSETTINGSSTATE_MAXALTITUDECHANGED_CURRENT,
++	arg);
++    if (arg) std::get<0>(current_min_max) = arg->value.Float;
++
++    HASH_FIND_STR(
++	arguments,
++	ARCONTROLLER_DICTIONARY_KEY_ARDRONE3_PILOTINGSETTINGSSTATE_MAXALTITUDECHANGED_MIN,
++	arg);
++    if (arg) std::get<1>(current_min_max) = arg->value.Float;
++
++    HASH_FIND_STR(
++	arguments,
++	ARCONTROLLER_DICTIONARY_KEY_ARDRONE3_PILOTINGSETTINGSSTATE_MAXALTITUDECHANGED_MAX,
++	arg);
++    if (arg) std::get<2>(current_min_max) = arg->value.Float;
++}
++
++std::tuple<bool, float, float, float>
++Ardrone3PilotingSettingsStateMaxAltitudeChanged::get(void) const {
++    std::unique_lock<std::mutex> lock(mutex);
++    return std::tuple_cat(std::make_tuple(received), current_min_max);
++}
+ }  // namespace bebop_driver
+diff --git a/src/bebop.cpp b/src/bebop.cpp
+index d7d6a1a..86d0a16 100644
+--- a/src/bebop.cpp
++++ b/src/bebop.cpp
+@@ -157,6 +157,14 @@ void Bebop::flatTrim(void) {
+ 		     "FlatTrim failed");
+ }
+ 
++void Bebop::setMaxAltitude(float max_altitude) {
++    throwOnInternalError("Set max altitude failed");
++    throwOnCtrlError(
++	deviceController->aRDrone3->sendPilotingSettingsMaxAltitude(
++	    deviceController->aRDrone3, max_altitude),
++	"Set max altitude failed");
++}
++
+ void Bebop::navigateHome(bool start_stop) {
+     throwOnInternalError("Navigate home failed");
+     throwOnCtrlError(deviceController->aRDrone3->sendPilotingNavigateHome(
+@@ -327,6 +335,14 @@ void commandReceivedCallback(
+ 	    bebop->ardrone3_piloting_state_attitude_changed.set(
+ 		element_dict_ptr->arguments);
+ 	    break;
++	case ARCONTROLLER_DICTIONARY_KEY_ARDRONE3_PILOTINGSTATE_ALTITUDECHANGED:
++	    bebop->ardrone3_piloting_state_altitude_changed.set(
++		element_dict_ptr->arguments);
++	    break;
++	case ARCONTROLLER_DICTIONARY_KEY_ARDRONE3_PILOTINGSETTINGSSTATE_MAXALTITUDECHANGED:
++	    bebop->ardrone3_piloting_settings_state_max_altitude_changed.set(
++		element_dict_ptr->arguments);
++	    break;
+ 	default:
+ 	    break;
+     }
+diff --git a/src/bebop_driver_node.cpp b/src/bebop_driver_node.cpp
+index 201235d..3f00997 100644
+--- a/src/bebop_driver_node.cpp
++++ b/src/bebop_driver_node.cpp
+@@ -67,6 +67,14 @@ BebopDriverNode::BebopDriverNode()
+ 	    "The frame id of the odometry frame of reference";
+ 	odom_frame_id = this->declare_parameter("odom_frame_id", "odom");
+     }
++    {
++	auto param_desc = rcl_interfaces::msg::ParameterDescriptor{};
++	param_desc.description =
++	    "Max altitude (m) sent to the Bebop on connect (firmware ceiling). "
++	    "<= 0 keeps the value stored in the drone";
++	max_altitude =
++	    this->declare_parameter("max_altitude", 2.0, param_desc);
++    }
+ 
+     auto bebop_ip = this->get_parameter("bebop_ip").as_string();
+     auto bebop_port = this->get_parameter("bebop_port").as_int();
+@@ -75,6 +83,12 @@ BebopDriverNode::BebopDriverNode()
+     bebop->connect(bebop_ip, bebop_port);
+     RCLCPP_INFO(this->get_logger(), "Connected");
+ 
++    if (max_altitude > 0.0) {
++	RCLCPP_INFO(this->get_logger(), "Setting max altitude to %.2f m",
++		    max_altitude);
++	bebop->setMaxAltitude(static_cast<float>(max_altitude));
++    }
++
+     // The core functions subscribers
+     // For: TakeOff, Land, Emergency, flatTrim, navigateHome, animationFlip,
+ 
+@@ -147,6 +161,8 @@ BebopDriverNode::BebopDriverNode()
+     // Odometry: published at 15Hz
+     publisher_odometry =
+ 	this->create_publisher<nav_msgs::msg::Odometry>("odom", 10);
++    publisher_altitude =
++	this->create_publisher<std_msgs::msg::Float64>("altitude", 10);
+     odom_timer = this->create_wall_timer(
+ 	66ms, std::bind(&BebopDriverNode::publishOdometry, this));
+ }
+@@ -261,6 +277,27 @@ void BebopDriverNode::publishOdometry(void) {
+ 
+     publisher_odometry->publish(odom_message);
+     last_odom_time = now;
++
++    // Altitude: measured by the Bebop, unlike the integrated z above
++    auto [altitude_time, altitude] = bebop->getArdrone3PilotingStateAltitude();
++    // Only republish recent values: a stale altitude must not look fresh
++    if (altitude_time.time_since_epoch().count() > 0 &&
++	clock_type::now() - altitude_time < 1s) {
++	auto altitude_message = std_msgs::msg::Float64();
++	altitude_message.data = altitude;
++	publisher_altitude->publish(altitude_message);
++    }
++
++    if (!max_altitude_logged) {
++	auto [received, current, min_alt, max_alt] =
++	    bebop->getArdrone3PilotingSettingsStateMaxAltitude();
++	if (received) {
++	    RCLCPP_INFO(this->get_logger(),
++			"MaxAltitude current=%.2f m (allowed %.2f to %.2f m)",
++			current, min_alt, max_alt);
++	    max_altitude_logged = true;
++	}
++    }
+ }
+ 
+ void BebopDriverNode::cmdVelCallback(

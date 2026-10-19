@@ -1,8 +1,8 @@
 #include "SetPosePlugin.hh"
 
 using namespace gz;
-using namespace sim;
-using namespace systems;
+using namespace gz::sim;
+using bebop_gz::SetPosePlugin;
 
 // Constructor por defecto
 SetPosePlugin::SetPosePlugin() = default;
@@ -73,5 +73,7 @@ void SetPosePlugin::OnPoseMsg(const gz::msgs::Pose &msg)
 }
 
 // Registra el plugin en Gazebo
-GZ_ADD_PLUGIN(SetPosePlugin, System, ISystemConfigure, ISystemPreUpdate)
-GZ_ADD_PLUGIN_ALIAS(SetPosePlugin, "gz::sim::systems::SetPosePlugin")
+// El alias conserva el nombre que usa el SDF (name="gz::sim::systems::SetPosePlugin")
+GZ_ADD_PLUGIN(bebop_gz::SetPosePlugin, gz::sim::System,
+              gz::sim::ISystemConfigure, gz::sim::ISystemPreUpdate)
+GZ_ADD_PLUGIN_ALIAS(bebop_gz::SetPosePlugin, "gz::sim::systems::SetPosePlugin")

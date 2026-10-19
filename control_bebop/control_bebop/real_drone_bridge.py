@@ -9,6 +9,7 @@ Salidas (driver):
     /bebop/cmd_vel, /bebop/takeoff, /bebop/land, /bebop/reset, /bebop/flattrim
 Odometría:
     /bebop/odom → /bebop1/pose (Pose, marco de despegue) y /odom_local (Odometry)
+    /bebop/altitude (Float64, altura medida por el Bebop) → z de /bebop1/pose
 """
 import time
 
@@ -16,9 +17,10 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist, Pose
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Empty
+from std_msgs.msg import Empty, Float64
 
-from .frames import TakeoffFrame, yaw_from_quaternion, quaternion_from_yaw
+from .frames import (TakeoffFrame, quaternion_from_yaw, select_altitude,
+                     yaw_from_quaternion)
 from .safety import GeofenceParams, apply_geofence, clamp
 
 
@@ -30,6 +32,11 @@ class RealDroneBridge(Node):
         self.declare_parameter('max_z', 2.0)
         self.declare_parameter('arena_x_max', 2.0)
         self.declare_parameter('geofence_enabled', True)
+        # False: la geocerca no actúa sobre gaz
+        self.declare_parameter('z_geofence_enabled', True)
+        # z de /bebop/altitude (sonar + barómetro) en vez de la vz integrada
+        self.declare_parameter('use_altitude_topic', True)
+        self.declare_parameter('altitude_timeout', 1.0)
         # Calibración: soporta tanto nombres antiguos (scale_x) como nuevos (odom_scale_x)
         self.declare_parameter('scale_x', 1.0)
         self.declare_parameter('scale_y', 1.0)
@@ -57,6 +64,7 @@ class RealDroneBridge(Node):
             enabled=gp('geofence_enabled').value,
             half_size=gp('arena_x_max').value,
             max_altitude=gp('max_z').value,
+            z_enabled=gp('z_geofence_enabled').value,
         )
         self.takeoff_frame = TakeoffFrame(
             scale=(sx, sy, 1.0),
@@ -66,6 +74,8 @@ class RealDroneBridge(Node):
         self.max_z = gp('max_cmd_z').value
         self.max_yaw = gp('max_cmd_yaw').value
         self.cmd_timeout = gp('cmd_timeout').value
+        self.use_altitude = gp('use_altitude_topic').value
+        self.altitude_timeout = gp('altitude_timeout').value
 
         # ── Publishers al driver ──────────────────────────────
         self.pub_cmd_vel = self.create_publisher(Twist, '/bebop/cmd_vel', 10)
@@ -87,12 +97,16 @@ class RealDroneBridge(Node):
 
         # ── Subscriber del driver ─────────────────────────────
         self.create_subscription(Odometry, '/bebop/odom', self.odom_cb, 10)
+        self.create_subscription(Float64, '/bebop/altitude', self.altitude_cb, 10)
 
         # ── Estado ────────────────────────────────────────────
         self.current_local_pose = None
         self.last_cmd_vel = Twist()
         self.last_cmd_time = 0.0
         self.last_odom_time = None
+        self.altitude = None
+        self.last_altitude_time = None
+        self.z_is_measured = False
         self._last_geofence_log = 0.0
 
         self.create_timer(0.05, self.watchdog_loop)   # 20 Hz
@@ -124,6 +138,10 @@ class RealDroneBridge(Node):
         self.last_cmd_time = time.time()
 
     # ── Odometría ─────────────────────────────────────────────
+    def altitude_cb(self, msg):
+        self.altitude = msg.data
+        self.last_altitude_time = time.time()
+
     def odom_cb(self, msg):
         self.last_odom_time = time.time()
         p = msg.pose.pose.position
@@ -132,6 +150,11 @@ class RealDroneBridge(Node):
         t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
 
         lx, ly, lz, lyaw = self.takeoff_frame.pose_to_local(p.x, p.y, p.z, yaw, t)
+        if self.use_altitude:
+            age = (None if self.last_altitude_time is None
+                   else time.time() - self.last_altitude_time)
+            lz, self.z_is_measured = select_altitude(
+                lz, self.altitude, age, self.altitude_timeout)
         lqx, lqy, lqz, lqw = quaternion_from_yaw(lyaw)
 
         pose = Pose()
@@ -187,6 +210,10 @@ class RealDroneBridge(Node):
                 'Sin /bebop/odom todavía — ¿está corriendo el driver y conectado al Wi-Fi del dron?')
         elif time.time() - self.last_odom_time > 2.0:
             self.get_logger().warn('/bebop/odom detenido (>2 s)')
+        if self.use_altitude and not self.z_is_measured:
+            self.get_logger().warn(
+                'Sin /bebop/altitude reciente: la z es la vz integrada y deriva. '
+                '¿El driver tiene el parche de altura? (patches/)')
 
 
 def main(args=None):

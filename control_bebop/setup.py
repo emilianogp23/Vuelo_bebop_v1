@@ -4,6 +4,20 @@ from setuptools import find_packages, setup
 
 package_name = 'control_bebop'
 
+
+def _tree_data_files(root):
+    """Instala una carpeta completa en share/, conservando su estructura.
+
+    Se usa para resource/meshes: los modelos de objetos que carga Gazebo
+    con model://<nombre> (ver config/sim.yaml y bebop_gz/worlds/bebop1.sdf).
+    """
+    entries = []
+    for dirpath, _dirs, files in os.walk(root):
+        if files:
+            entries.append((os.path.join('share', package_name, dirpath),
+                            [os.path.join(dirpath, f) for f in files]))
+    return entries
+
 setup(
     name=package_name,
     version='0.1.0',
@@ -16,7 +30,7 @@ setup(
             glob(os.path.join('launch', '*launch.[pxy][yma]*'))),
         (os.path.join('share', package_name, 'config'),
             glob(os.path.join('config', '*.yaml'))),
-    ],
+    ] + _tree_data_files(os.path.join('resource', 'meshes')),
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='emiliano',
