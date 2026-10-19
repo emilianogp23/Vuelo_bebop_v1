@@ -25,10 +25,10 @@ from control_bebop.paths import data_dir
 
 WORLD_NAME = 'bebop1.sdf'
 
-# Tópicos de la simulación que se graban (en simulación no existe /bebop1/odom)
+# Tópicos de la simulación que se graban (/bebop1/odom lo publica odom_viewer)
 SIM_BAG_TOPICS = [
-    '/bebop1/pose', '/goal', '/goal_vel', '/flight_state',
-    '/bebop1/cmd_vel', '/trajectory_done', '/joy_cmd',
+    '/bebop1/pose', '/bebop1/odom', '/goal', '/goal_vel', '/flight_state',
+    '/bebop1/cmd_vel', '/trajectory_done', '/joy', '/joy_cmd',
 ]
 
 
@@ -137,6 +137,9 @@ def sim_nodes(context):
              name='trajectory_planner', output='screen', parameters=[sim_cfg]),
         Node(package='control_bebop', executable='nodo_video',
              name='nodo_video', output='screen', parameters=[sim_cfg]),
+        # Convierte /bebop1/pose en /bebop1/odom con velocidades
+        Node(package='control_bebop', executable='odom_viewer',
+             name='odom_viewer', output='log', parameters=[{'log_rate': 2.0}]),
     ]
     if is_true(context, 'gui'):
         actions.append(
@@ -147,7 +150,7 @@ def sim_nodes(context):
         bag = os.path.join(data_dir('bags'), f'vuelo_sim_{stamp}')
         actions += [
             LogInfo(msg=f'Grabando bag en {bag}'),
-            ExecuteProcess(cmd=['ros2', 'bag', 'record', '-o', bag] + SIM_BAG_TOPICS,
+            ExecuteProcess(cmd=['ros2', 'bag', 'record', '-s', 'sqlite3', '-o', bag] + SIM_BAG_TOPICS,
                            output='log'),
         ]
     return actions
