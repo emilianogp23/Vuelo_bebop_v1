@@ -13,3 +13,6 @@ control_bebop/trayectorias/
 
 __pycache__/
 *.pyc
+build/
+install/
+log/
