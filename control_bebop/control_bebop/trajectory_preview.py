@@ -31,6 +31,7 @@ class FakeDrone(Node):
         self.declare_parameter('tau', 0.6)        # constante de tiempo (s)
         self.declare_parameter('max_speed', 0.5)  # m/s
         self.declare_parameter('start_delay', 2.0)
+        self.declare_parameter('show_plot', True)   # False: la vista la dibuja plot_3d
 
         g = lambda n: self.get_parameter(n).value
         self.cx, self.cy = g('target_x'), g('target_y')
@@ -95,6 +96,13 @@ def main(args=None):
     node = FakeDrone()
     th = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
     th.start()
+
+    if not node.get_parameter('show_plot').value:
+        try:
+            th.join()
+        except KeyboardInterrupt:
+            pass
+        return
 
     import matplotlib.pyplot as plt
     from matplotlib.patches import Rectangle

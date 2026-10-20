@@ -18,6 +18,9 @@ def generate_launch_description():
         Node(package='control_bebop', executable='trajectory_planner',
              name='trajectory_controller', parameters=[cfg], output='screen'),
         Node(package='control_bebop', executable='trajectory_preview',
-             name='trajectory_preview', parameters=[cfg], output='screen'),
+             name='trajectory_preview', parameters=[cfg, {'show_plot': False}],
+             output='screen'),
+        Node(package='control_bebop', executable='plot_3d',
+             name='plot_3d', parameters=[cfg], output='screen'),
     ])
 

@@ -8,6 +8,8 @@ Cadena de comandos:
     real_drone_bridge → /bebop/takeoff, /bebop/land, /bebop/reset, /bebop/flattrim, /bebop/cmd_vel
     real_drone_bridge ← /bebop/odom   → /bebop1/pose (marco de despegue), /odom_local
     real_drone_bridge ← /bebop/altitude → z de /bebop1/pose (requiere el parche del driver)
+    aruco_localizer (cámara del Bebop) → /vision/onboard/pose ─┐
+    ceiling_tracker (C920 del techo)   → /vision/ceiling/pose ─┴→ real_drone_bridge (use_vision)
 
 Uso:
     # Driver corriendo en otra terminal (recomendado):
@@ -19,6 +21,12 @@ Uso:
 
     # Usar el YAML de calibración generado por analisis_deriva:
     ros2 launch control_bebop real_flight.launch.py use_calibration:=true
+
+    # Escanear un objeto en el piso (Pioneer 3DX): cámara hacia abajo en la órbita
+    ros2 launch control_bebop real_flight.launch.py obj_suelo:=true
+
+    # Sin la cámara del techo o sin localización visual:
+    ros2 launch control_bebop real_flight.launch.py launch_ceiling:=false launch_vision:=false
 """
 
 import os
@@ -44,6 +52,9 @@ def _build_nodes(context):
     # analisis_deriva) y luego la instalada en share
     calib_src = config_file('real_drone_calibrated.yaml')
     use_calib = LaunchConfiguration('use_calibration').perform(context).lower() == 'true'
+    obj_suelo = LaunchConfiguration('obj_suelo').perform(context).lower() == 'true'
+    # Pioneer 3DX: ~0.45 x 0.38 m, 0.24 m de alto (solo para dibujarlo)
+    objeto = ({'object_height': 0.24, 'object_size': 0.45} if obj_suelo else {})
 
     params = [base_cfg]
     if use_calib and calib_src:
@@ -137,6 +148,29 @@ def _build_nodes(context):
         ),
         Node(
             package='control_bebop',
+            executable='aruco_localizer',
+            name='aruco_localizer',
+            parameters=params + [{'obj_suelo': obj_suelo}],
+            output='screen',
+            condition=IfCondition(LaunchConfiguration('launch_vision')),
+        ),
+        Node(
+            package='control_bebop',
+            executable='ceiling_tracker',
+            name='ceiling_tracker',
+            output='screen',
+            condition=IfCondition(LaunchConfiguration('launch_ceiling')),
+        ),
+        Node(
+            package='control_bebop',
+            executable='plot_3d',
+            name='plot_3d',
+            parameters=params + [objeto],
+            output='screen',
+            condition=IfCondition(LaunchConfiguration('launch_plot3d')),
+        ),
+        Node(
+            package='control_bebop',
             executable='gui_odometria',
             name='gui_odometria',
             output='screen',
@@ -147,7 +181,9 @@ def _build_nodes(context):
                  '/bebop/odom', '/bebop/cmd_vel', '/bridge/cmd_vel_raw',
                  '/bebop1/pose', '/odom_local', '/joy', '/joy_cmd',
                  '/flight_state', '/goal', '/goal_vel',
-                 '/bebop/altitude', '/trajectory_stalled'],
+                 '/bebop/altitude', '/trajectory_stalled',
+                 '/vision/onboard/pose', '/vision/ceiling/pose', '/vision/fused_pose',
+                 '/vision/lock', '/vision/reset'],
             output='log',
         ),
     ]
@@ -163,6 +199,14 @@ def generate_launch_description():
                               description='IP del Bebop 2'),
         DeclareLaunchArgument('max_altitude', default_value='2.0',
                               description='Techo de firmware enviado al Bebop (con launch_driver:=true)'),
+        DeclareLaunchArgument('obj_suelo', default_value='false',
+                              description='Objeto en el piso (Pioneer 3DX): cámara hacia abajo en la órbita'),
+        DeclareLaunchArgument('launch_plot3d', default_value='true',
+                              description='Vista 3D en tiempo real (plot_3d)'),
+        DeclareLaunchArgument('launch_vision', default_value='true',
+                              description='Localizador ArUco con la cámara del Bebop (mueve el tilt)'),
+        DeclareLaunchArgument('launch_ceiling', default_value='true',
+                              description='Localizador con la cámara C920 del techo'),
         DeclareLaunchArgument('use_calibration', default_value='false',
                               description='Cargar config/real_drone_calibrated.yaml'),
         OpaqueFunction(function=_build_nodes),

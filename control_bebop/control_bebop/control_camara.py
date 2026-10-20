@@ -124,9 +124,9 @@ class ControlCamaraBebop(Node):
         if name in PRESETS:
             t, p = PRESETS[name]
             self.set_orientation(t, p)
-            self.get_logger().info(f"🎯 Preset de cámara aplicado: '{name}' -> Tilt: {t}°, Pan: {p}°")
+            self.get_logger().info(f" Preset de cámara aplicado: '{name}' -> Tilt: {t}°, Pan: {p}°")
         else:
-            self.get_logger().warn(f"⚠️ Preset desconocido: '{name}'. Opciones: {list(PRESETS.keys())}")
+            self.get_logger().warn(f" Preset desconocido: '{name}'. Opciones: {list(PRESETS.keys())}")
 
     def _joy_cb(self, msg: Joy):
         ax_x = int(self.get_parameter('dpad_axis_x').value)

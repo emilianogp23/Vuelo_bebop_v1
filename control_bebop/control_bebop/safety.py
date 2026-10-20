@@ -36,6 +36,10 @@ class GeofenceParams:
     # La z de ros2_bebop_driver es vz integrada y deriva (±0.3–0.9 m por vuelo).
     # Con False no se toca gaz por altura: el techo real se fija en el firmware.
     z_enabled: bool = True
+    # Zona segura de despegue: círculo de este radio en el origen. Fuera de
+    # ella no se baja de min_z_outside_safe (hay robots en el piso). 0 = off.
+    safe_zone_radius: float = 0.5
+    min_z_outside_safe: float = 0.0
 
 
 def apply_geofence(cmd, pose, p):
@@ -72,6 +76,18 @@ def apply_geofence(cmd, pose, p):
 
     wx = _limit(wx, x, 'x')
     wy = _limit(wy, y, 'y')
+
+    # Bajo y en el borde de la zona segura (o fuera): no alejarse y subir
+    r = math.hypot(x, y)
+    low_outside = (p.z_enabled and p.min_z_outside_safe > 0.0 and z < p.min_z_outside_safe
+                   and r >= p.safe_zone_radius)
+    if low_outside:
+        ux, uy = x / r, y / r
+        outward = wx * ux + wy * uy
+        if outward > 0.0:
+            wx -= outward * ux
+            wy -= outward * uy
+            events.append('zona_segura_bloqueo')
     pitch, roll = rotate2d(wx, wy, -yaw)
 
     # Altitud
@@ -83,6 +99,9 @@ def apply_geofence(cmd, pose, p):
     elif z >= p.max_altitude - p.alt_soft_margin and gaz > 0.0:
         events.append('techo_bloqueo')
         gaz = 0.0
+    elif low_outside:
+        events.append('zona_segura_subir')
+        gaz = max(gaz, abs(p.push_cmd_z))
     elif z <= p.min_altitude and gaz < 0.0:
         events.append('piso_bloqueo')
         gaz = 0.0

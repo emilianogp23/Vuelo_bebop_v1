@@ -1,0 +1,39 @@
+# Mapa de marcadores ArUco del corral (marco "corral").
+#
+# Origen: centro de la zona segura de despegue, en el piso. x hacia la valla
+# de enfrente al despegar, y a la izquierda, z arriba. El dron se coloca en el
+# origen mirando a +x.
+#
+# ⚠️ VALORES NOMINALES: suponen la zona segura en el centro de un corral de
+# 4 x 4 m. Medir cada marcador con cinta (centro del cuadro negro, ±1 cm) y
+# reemplazar antes de volar.
+#
+# Paredes: normal_yaw_deg = hacia dónde mira la cara del marcador.
+# Piso:    floor_yaw_deg  = hacia dónde apunta el borde superior del marcador.
+# size = lado del cuadro negro (m), sin el margen blanco.
+# Imprimir con: python3 scripts/generar_marcadores.py
+dictionary: DICT_4X4_50
+
+# Marcador pegado arriba del dron, borde superior hacia el frente (lo ve la
+# cámara del techo). No debe repetirse en la lista de abajo.
+drone_marker: {id: 40, size: 0.10}
+
+markers:
+  # Vallas: 8 tablas de 2 m x 0.60 m, un marcador centrado en cada una
+  # (centro del cuadro negro a 0.30 m del piso, a 1 m de cada esquina)
+  - {id: 0, size: 0.17, center: [2.00, 1.00, 0.30], normal_yaw_deg: 180}
+  - {id: 1, size: 0.17, center: [2.00, -1.00, 0.30], normal_yaw_deg: 180}
+  - {id: 2, size: 0.17, center: [-1.00, 2.00, 0.30], normal_yaw_deg: -90}
+  - {id: 3, size: 0.17, center: [1.00, 2.00, 0.30], normal_yaw_deg: -90}
+  - {id: 4, size: 0.17, center: [-2.00, -1.00, 0.30], normal_yaw_deg: 0}
+  - {id: 5, size: 0.17, center: [-2.00, 1.00, 0.30], normal_yaw_deg: 0}
+  - {id: 6, size: 0.17, center: [1.00, -2.00, 0.30], normal_yaw_deg: 90}
+  - {id: 7, size: 0.17, center: [-1.00, -2.00, 0.30], normal_yaw_deg: 90}
+  # Piso: alrededor del objeto (Pioneer 3DX en target_x, target_y), a ~0.5 m de su
+  # centro en diagonal. Con obj_suelo:=true son los que ve la cámara del Bebop
+  # durante la órbita (mirando hacia abajo no ve las vallas). También sirven
+  # para calibrar la cámara del techo. Si se mueve el robot, se mueven y se re-miden.
+  - {id: 30, size: 0.17, center: [1.50, 0.50, 0.0], floor_yaw_deg: 0}
+  - {id: 31, size: 0.17, center: [1.50, -0.50, 0.0], floor_yaw_deg: 0}
+  - {id: 32, size: 0.17, center: [0.50, -0.50, 0.0], floor_yaw_deg: 0}
+  - {id: 33, size: 0.17, center: [0.50, 0.50, 0.0], floor_yaw_deg: 0}

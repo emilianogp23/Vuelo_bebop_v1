@@ -21,7 +21,7 @@ import math
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Pose, Twist
-from std_msgs.msg import Int32, Bool
+from std_msgs.msg import Int32, Bool, Empty
 
 
 # ── Constantes de estado ──────────────────────────────────────
@@ -96,6 +96,11 @@ class FlightManager(Node):
         self.declare_parameter('frequency', 20.0)
         self.declare_parameter('home_x', 0.0)
         self.declare_parameter('home_y', 0.0)
+        # Visión al mando (use_vision y no vision_shadow): sin lock no se
+        # inicia la órbita y tras vision_loss_hover_time sin lock → HOVER
+        self.declare_parameter('use_vision', False)
+        self.declare_parameter('vision_shadow', True)
+        self.declare_parameter('vision_loss_hover_time', 2.0)
 
         self.use_real_drone = self.get_parameter('use_real_drone').value
         self.takeoff_height = self.get_parameter('takeoff_height').value
@@ -120,6 +125,12 @@ class FlightManager(Node):
         self.freq = self.get_parameter('frequency').value
         self.home_x = self.get_parameter('home_x').value
         self.home_y = self.get_parameter('home_y').value
+        self.vision_required = (self.get_parameter('use_vision').value
+                                and not self.get_parameter('vision_shadow').value)
+        self.vision_loss_hover_time = self.get_parameter('vision_loss_hover_time').value
+        self.vision_lock = False
+        self.last_vision_lock_time = None
+        self.vision_reset_pending = False
 
         # ── Publishers ────────────────────────────────────────
         self.pub_state = self.create_publisher(Int32, '/flight_state', 10)
@@ -145,6 +156,9 @@ class FlightManager(Node):
             Bool, '/trajectory_done', self._trajectory_done_callback, 10)
         self.create_subscription(
             Bool, '/trajectory_stalled', self._trajectory_stalled_callback, 10)
+        if self.vision_required:
+            self.create_subscription(Bool, '/vision/lock', self._vision_lock_callback, 10)
+            self.create_subscription(Empty, '/vision/reset', self._vision_reset_callback, 10)
 
         # ── Estado interno ────────────────────────────────────
         self.state = IDLE
@@ -332,6 +346,8 @@ class FlightManager(Node):
         self.current_yaw = euler_yaw_from_quaternion(
             msg.orientation.x, msg.orientation.y,
             msg.orientation.z, msg.orientation.w)
+        if self.vision_reset_pending:
+            self._apply_vision_reset()
 
     def _deadman_callback(self, msg):
         # Cualquier mensaje = el mando sigue vivo (joy_node publica a 20 Hz)
@@ -397,7 +413,9 @@ class FlightManager(Node):
                 self.get_logger().warn('FlatTrim ignorado: el dron no está en tierra (IDLE)')
 
         elif cmd == CMD_AUTO:
-            if self.deadman_active and self.state in (HOVER, MANUAL):
+            if self.vision_required and not self.vision_lock:
+                self.get_logger().warn('Órbita rechazada: sin lock visual (marcadores)')
+            elif self.deadman_active and self.state in (HOVER, MANUAL):
                 self._transition_to(AUTOMATIC)
 
         elif cmd == CMD_MANUAL:
@@ -437,6 +455,37 @@ class FlightManager(Node):
                 '⚠️ Órbita atascada (deriva) → HOVER. R1 con L2 para reanudar')
             self._transition_to(HOVER)
 
+    def _vision_lock_callback(self, msg):
+        self.vision_lock = msg.data
+        if msg.data:
+            self.last_vision_lock_time = self.get_clock().now()
+
+    def _vision_reset_callback(self, _):
+        # La pose saltada llega en el siguiente /bebop1/pose: actuar ahí
+        self.vision_reset_pending = True
+
+    def _apply_vision_reset(self):
+        """La pose saltó al (re)inicializar la visión: los goals viejos ya no valen."""
+        self.vision_reset_pending = False
+        if self.state in (AUTOMATIC, RECOVERY, RETURN_HOME):
+            self.get_logger().warn('Pose visual reinicializada → HOVER')
+            self._transition_to(HOVER)
+        elif self.state in (TAKING_OFF, HOVER, MANUAL):
+            self.goal_x, self.goal_y = self.current_x, self.current_y
+            self.goal_yaw = self.current_yaw
+            self.get_logger().info('Pose visual reinicializada: goal en la posición actual')
+
+    def _check_vision(self):
+        """Sin lock visual un rato en un estado que sigue una posición → HOVER."""
+        if not self.vision_required or self.state not in (AUTOMATIC, RECOVERY, RETURN_HOME):
+            return
+        now = self.get_clock().now()
+        since = (float('inf') if self.last_vision_lock_time is None
+                 else (now - self.last_vision_lock_time).nanoseconds / 1e9)
+        if since > self.vision_loss_hover_time:
+            self.get_logger().warn(f'⚠️ Sin visión {since:.1f} s → HOVER (odometría pura)')
+            self._transition_to(HOVER)
+
     # ══════════════════════════════════════════════════════════
     #  LOOP PRINCIPAL
     # ══════════════════════════════════════════════════════════
@@ -451,6 +500,7 @@ class FlightManager(Node):
 
         # ── 2. Verificar límites de arena ─────────────────────
         self._check_arena_limits()
+        self._check_vision()
 
         # ── 3. Lógica específica por estado ───────────────────
         if self.state == IDLE or self.state == EMERGENCY:

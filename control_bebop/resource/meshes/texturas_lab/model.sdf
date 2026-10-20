@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<!-- Solo contiene texturas; los modelos del corral están en bebop1.sdf. -->
+<sdf version="1.9">
+  <model name="texturas_lab">
+    <static>true</static>
+    <link name="link"/>
+  </model>
+</sdf>

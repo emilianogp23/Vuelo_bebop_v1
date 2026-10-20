@@ -114,3 +114,25 @@ def test_select_altitude_falls_back_when_stale():
 def test_select_altitude_falls_back_without_measurement():
     assert select_altitude(0.7, None, None, 1.0) == (pytest.approx(0.7), False)
 
+
+
+# ── Zona segura (robots en el piso) ───────────────────────────
+def test_low_outside_safe_zone_climbs_and_blocks_outward():
+    p = GeofenceParams(safe_zone_radius=0.5, min_z_outside_safe=1.0)
+    # En x=0.6 a 0.8 m de altura, mirando a +x y avanzando hacia afuera
+    (pitch, roll, gaz, _), events = apply_geofence((0.2, 0.1, -0.1, 0.0), (0.6, 0, 0.8, 0), p)
+    assert pitch == pytest.approx(0.0, abs=1e-9)
+    assert roll == pytest.approx(0.1)          # tangencial: permitido
+    assert gaz > 0.0
+    assert {'zona_segura_bloqueo', 'zona_segura_subir'} <= set(events)
+    # Hacia adentro sí se deja
+    (pitch, _, _, _), _ = apply_geofence((-0.2, 0.0, 0.0, 0.0), (0.6, 0, 0.8, 0), p)
+    assert pitch == pytest.approx(-0.2)
+
+
+def test_safe_zone_allows_low_inside_and_high_outside():
+    p = GeofenceParams(safe_zone_radius=0.5, min_z_outside_safe=1.0)
+    for pose in ((0.2, 0.0, 0.3, 0.0), (1.0, 0.0, 1.2, 0.0)):
+        cmd, events = apply_geofence((0.2, 0.0, -0.1, 0.0), pose, p)
+        assert cmd[0] == pytest.approx(0.2)
+        assert not any(e.startswith('zona_segura') for e in events)

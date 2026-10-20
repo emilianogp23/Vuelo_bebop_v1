@@ -20,6 +20,36 @@
     use_altitude_topic: true
     altitude_timeout: 1.0
 
+    # ── Zona segura y robots en el piso ───────────────────────
+    # Origen = centro de la zona segura de despegue. Fuera de este círculo la
+    # geocerca no deja bajar de min_z_outside_safe ni alejarse si está más
+    # bajo (empuja hacia arriba). Requiere z medida (/bebop/altitude).
+    safe_zone_radius: 0.5
+    min_z_outside_safe: 1.0
+
+    # ── Corrección visual (ArUco en vallas + C920 del techo) ──
+    # Ver PLAN_LOCALIZACION_ARUCO.md. Marco "corral": origen en la zona segura,
+    # x hacia la valla de enfrente al despegar (config/aruco_map.yaml).
+    # use_vision: fusiona /vision/onboard/pose y /vision/ceiling/pose con la odometría.
+    # vision_shadow: true = solo publica /vision/fused_pose para comparar; el
+    #   control sigue con la odometría. false = el control usa la pose corregida,
+    #   R1 exige lock visual y sin visión > vision_loss_hover_time → HOVER.
+    use_vision: true
+    vision_shadow: true
+    vision_q_xy: 0.0025
+    vision_q_yaw: 0.0001
+    vision_gate_xy: 0.5
+    vision_gate_yaw_deg: 15.0
+    vision_lock_timeout: 0.5
+    vision_loss_hover_time: 2.0
+    # Tilt de la cámara del Bebop para ver los ArUco de las vallas (también
+    # afecta el video del escaneo). NaN = aruco_localizer no mueve la cámara.
+    camera_tilt_deg: -28.0
+    # Con real_flight.launch.py obj_suelo:=true (objeto en el piso, Pioneer 3DX)
+    # la cámara baja a este tilt durante la órbita. Para radio r y altura h:
+    # tilt ≈ -atan((h - 0.12) / r); r 0.5 y h 1.5 → -70°.
+    camera_tilt_suelo_deg: -70.0
+
     # ── Ganancias PID (control_PID.py) ────────────────────────
     # Identificado en los bags del 13 y 15 oct: pitch/roll ≈ aceleración,
     # retardo ~0.6–0.8 s, ~1.5–2 m/s por unidad en régimen. Con kp 0.70 /

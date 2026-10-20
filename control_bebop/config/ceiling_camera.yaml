@@ -1,0 +1,17 @@
+# Cámara del techo (Logitech C920). Lo escribe calibrar_camara_techo.
+# focus: 0 = infinito en la C920; autofoco siempre apagado.
+# exposure: -1 = automática; un valor fijo evita cambios con la luz.
+device: 0
+width: 1280
+height: 720
+fps: 30
+focus: 0
+exposure: -1
+# Nominales de una C920 a 1280x720 (sin calibrar). Reemplazar con:
+#   ros2 run control_bebop calibrar_camara_techo intrinsecos
+camera_matrix: [930.0, 0.0, 640.0, 0.0, 930.0, 360.0, 0.0, 0.0, 1.0]
+dist_coeffs: [0.0, 0.0, 0.0, 0.0, 0.0]
+intrinsics_calibrated: false
+# Posición de la cámara en el marco corral (mundo → cámara). Se calcula con:
+#   ros2 run control_bebop calibrar_camara_techo extrinsecos
+extrinsics: {calibrated: false}

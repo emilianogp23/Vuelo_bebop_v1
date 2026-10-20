@@ -67,7 +67,7 @@ class TrajectoryPlanner(Node):
         # ── Parámetros de trayectoria ──
         self.declare_parameter('target_x', 1.0)        # Centro del círculo X (+1m adelante)
         self.declare_parameter('target_y', 0.0)       # Centro del círculo Y
-        self.declare_parameter('circle_radius', 0.40)  # Radio (m)
+        self.declare_parameter('circle_radius', 0.50)  # Radio (m)
         self.declare_parameter('circle_height', 1.0)   # Altura (m)
         # True: usa la altura que tenga el dron al entrar a AUTOMATIC (sin
         # escalón en z). La z del Bebop es velocidad integrada y deriva, así

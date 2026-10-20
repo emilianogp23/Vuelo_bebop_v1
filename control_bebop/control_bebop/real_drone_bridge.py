@@ -10,18 +10,26 @@ Salidas (driver):
 Odometría:
     /bebop/odom → /bebop1/pose (Pose, marco de despegue) y /odom_local (Odometry)
     /bebop/altitude (Float64, altura medida por el Bebop) → z de /bebop1/pose
+Visión (use_vision, ver vision.py):
+    /vision/onboard/pose, /vision/ceiling/pose → Kalman de offset sobre la odometría
+    vision_shadow=false: /bebop1/pose en marco corral (corregida)
+    vision_shadow=true:  /bebop1/pose igual que sin visión; la corregida va a /vision/fused_pose
+    /vision/lock (Bool, 10 Hz), /vision/reset (Empty: la pose saltó por (re)inicialización)
 """
+import dataclasses
+import math
 import time
 
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Twist, Pose
+from geometry_msgs.msg import Pose, PoseStamped, PoseWithCovarianceStamped, Twist
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Empty, Float64
+from std_msgs.msg import Bool, Empty, Float64
 
 from .frames import (TakeoffFrame, quaternion_from_yaw, select_altitude,
                      yaw_from_quaternion)
 from .safety import GeofenceParams, apply_geofence, clamp
+from .vision import OdomHistory, OffsetFilter
 
 
 class RealDroneBridge(Node):
@@ -53,6 +61,18 @@ class RealDroneBridge(Node):
         self.declare_parameter('max_cmd_z', 0.6)
         self.declare_parameter('max_cmd_yaw', 0.6)
         self.declare_parameter('cmd_timeout', 0.3)
+        # Zona segura de despegue (círculo en el origen): fuera de ella no se
+        # baja de min_z_outside_safe (robots en el piso). 0 = desactivado.
+        self.declare_parameter('safe_zone_radius', 0.5)
+        self.declare_parameter('min_z_outside_safe', 1.0)
+        # Corrección visual
+        self.declare_parameter('use_vision', False)
+        self.declare_parameter('vision_shadow', True)
+        self.declare_parameter('vision_q_xy', 0.0025)      # m²/s de deriva de la odometría
+        self.declare_parameter('vision_q_yaw', 1e-4)       # rad²/s
+        self.declare_parameter('vision_gate_xy', 0.5)
+        self.declare_parameter('vision_gate_yaw_deg', 15.0)
+        self.declare_parameter('vision_lock_timeout', 0.5)
 
         gp = self.get_parameter
         sx = gp('odom_scale_x').value if gp('odom_scale_x').value != 1.0 else gp('scale_x').value
@@ -65,6 +85,8 @@ class RealDroneBridge(Node):
             half_size=gp('arena_x_max').value,
             max_altitude=gp('max_z').value,
             z_enabled=gp('z_geofence_enabled').value,
+            safe_zone_radius=gp('safe_zone_radius').value,
+            min_z_outside_safe=gp('min_z_outside_safe').value,
         )
         self.takeoff_frame = TakeoffFrame(
             scale=(sx, sy, 1.0),
@@ -76,6 +98,18 @@ class RealDroneBridge(Node):
         self.cmd_timeout = gp('cmd_timeout').value
         self.use_altitude = gp('use_altitude_topic').value
         self.altitude_timeout = gp('altitude_timeout').value
+        self.use_vision = gp('use_vision').value
+        self.vision_shadow = gp('vision_shadow').value
+        # Visión al mando: la pose corregida alimenta control y geocerca
+        self.vision_active = self.use_vision and not self.vision_shadow
+        self.vision_lock_timeout = gp('vision_lock_timeout').value
+        self.odom_hist = OdomHistory()
+        self.vfilter = OffsetFilter(
+            q_xy=gp('vision_q_xy').value, q_yaw=gp('vision_q_yaw').value,
+            gate_xy=gp('vision_gate_xy').value,
+            gate_yaw=math.radians(gp('vision_gate_yaw_deg').value))
+        self.last_vision_ok = None
+        self.vision_stats = {}
 
         # ── Publishers al driver ──────────────────────────────
         self.pub_cmd_vel = self.create_publisher(Twist, '/bebop/cmd_vel', 10)
@@ -99,6 +133,17 @@ class RealDroneBridge(Node):
         self.create_subscription(Odometry, '/bebop/odom', self.odom_cb, 10)
         self.create_subscription(Float64, '/bebop/altitude', self.altitude_cb, 10)
 
+        # ── Visión ────────────────────────────────────────────
+        if self.use_vision:
+            for src in ('onboard', 'ceiling'):
+                self.create_subscription(
+                    PoseWithCovarianceStamped, f'/vision/{src}/pose',
+                    lambda msg, src=src: self.vision_cb(msg, src), 10)
+            self.pub_fused = self.create_publisher(PoseStamped, '/vision/fused_pose', 10)
+            self.pub_lock = self.create_publisher(Bool, '/vision/lock', 10)
+            self.pub_vreset = self.create_publisher(Empty, '/vision/reset', 10)
+            self.create_timer(0.1, self.lock_loop)
+
         # ── Estado ────────────────────────────────────────────
         self.current_local_pose = None
         self.last_cmd_vel = Twist()
@@ -116,8 +161,12 @@ class RealDroneBridge(Node):
 
     # ── Comandos discretos ────────────────────────────────────
     def takeoff_cb(self, _):
-        # Re-anclar el marco de despegue al punto actual
-        self.takeoff_frame.origin = None
+        # Re-anclar el marco de despegue al punto actual. Con visión al mando
+        # no: el offset visual se calculó sobre el marco viejo.
+        if not self.vision_active:
+            self.takeoff_frame.origin = None
+            self.vfilter.reset()
+            self.odom_hist = OdomHistory()
         self.pub_takeoff.publish(Empty())
         self.get_logger().info('🛫 TAKEOFF → /bebop/takeoff')
 
@@ -155,6 +204,15 @@ class RealDroneBridge(Node):
                    else time.time() - self.last_altitude_time)
             lz, self.z_is_measured = select_altitude(
                 lz, self.altitude, age, self.altitude_timeout)
+        if self.use_vision:
+            self.odom_hist.add(t, lx, ly, lyaw)
+            self.vfilter.predict(t)
+            if self.vfilter.initialized:
+                fx, fy, fyaw = self.vfilter.apply(lx, ly, lyaw)
+                if self.vision_active:
+                    lx, ly, lyaw = fx, fy, fyaw
+                else:
+                    self._publish_fused(msg.header, fx, fy, lz, fyaw)
         lqx, lqy, lqz, lqw = quaternion_from_yaw(lyaw)
 
         pose = Pose()
@@ -177,6 +235,47 @@ class RealDroneBridge(Node):
 
         self.current_local_pose = (lx, ly, lz, lyaw)
 
+    # ── Visión ────────────────────────────────────────────────
+    def vision_cb(self, msg, src):
+        t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        st = self.vision_stats.setdefault(src, {'ok': 0, 'rejected': 0, 'sin_odom': 0})
+        odom = self.odom_hist.at(t)
+        if odom is None:
+            st['sin_odom'] += 1
+            return
+        p = msg.pose.pose
+        meas = (p.position.x, p.position.y,
+                yaw_from_quaternion(p.orientation.x, p.orientation.y,
+                                    p.orientation.z, p.orientation.w))
+        cov = msg.pose.covariance
+        res = self.vfilter.update(meas, odom, math.sqrt(max(cov[0], 1e-6)),
+                                  math.sqrt(max(cov[35], 1e-6)))
+        if res == 'rejected':
+            st['rejected'] += 1
+            return
+        st['ok'] += 1
+        self.last_vision_ok = time.time()
+        if res in ('init', 'reinit'):
+            self.pub_vreset.publish(Empty())
+            dx, dy, dyaw = self.vfilter.offset
+            self.get_logger().warn(
+                f'Visión ({src}) {res}: offset ({dx:+.2f}, {dy:+.2f}) m, '
+                f'{math.degrees(dyaw):+.1f}°')
+
+    def lock_loop(self):
+        lock = (self.vfilter.initialized and self.last_vision_ok is not None
+                and time.time() - self.last_vision_ok < self.vision_lock_timeout)
+        self.pub_lock.publish(Bool(data=bool(lock)))
+
+    def _publish_fused(self, header, x, y, z, yaw):
+        msg = PoseStamped()
+        msg.header = header
+        msg.header.frame_id = 'corral'
+        msg.pose.position.x, msg.pose.position.y, msg.pose.position.z = x, y, z
+        (msg.pose.orientation.x, msg.pose.orientation.y,
+         msg.pose.orientation.z, msg.pose.orientation.w) = quaternion_from_yaw(yaw)
+        self.pub_fused.publish(msg)
+
     # ── Watchdog ──────────────────────────────────────────────
     def watchdog_loop(self):
         cmd = Twist()   # ceros = hover nativo del Bebop
@@ -190,9 +289,13 @@ class RealDroneBridge(Node):
             yaw_rate = clamp(src.angular.z, -self.max_yaw, self.max_yaw)
 
             if self.current_local_pose is not None:
+                gfp = self.geofence_params
+                if not self.z_is_measured:
+                    # La z integrada deriva: la altura mínima fuera de la zona
+                    # segura empujaría hacia arriba sin motivo
+                    gfp = dataclasses.replace(gfp, min_z_outside_safe=0.0)
                 (pitch, roll, gaz, yaw_rate), events = apply_geofence(
-                    (pitch, roll, gaz, yaw_rate),
-                    self.current_local_pose, self.geofence_params)
+                    (pitch, roll, gaz, yaw_rate), self.current_local_pose, gfp)
                 if events and now - self._last_geofence_log > 1.0:
                     self._last_geofence_log = now
                     self.get_logger().warn(f'Geocerca: {events}')
@@ -214,6 +317,12 @@ class RealDroneBridge(Node):
             self.get_logger().warn(
                 'Sin /bebop/altitude reciente: la z es la vz integrada y deriva. '
                 '¿El driver tiene el parche de altura? (patches/)')
+        if self.use_vision:
+            dx, dy, dyaw = self.vfilter.offset
+            self.get_logger().info(
+                f'Visión {"(sombra) " if self.vision_shadow else ""}{self.vision_stats} '
+                f'offset ({dx:+.2f}, {dy:+.2f}) m {math.degrees(dyaw):+.1f}°')
+            self.vision_stats = {}
 
 
 def main(args=None):

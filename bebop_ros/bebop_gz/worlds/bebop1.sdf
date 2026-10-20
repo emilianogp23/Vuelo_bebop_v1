@@ -223,38 +223,41 @@
     <!-- Objeto de interés en (1.0, 0.0): centro de la órbita, igual que en
          el vuelo real (1 m al frente del despegue). Ver config/sim.yaml. -->
     <!-- Cilindro -->
-    <model name="Cilindro">
-      <pose>1.0 0.0 0.5 0 0 0</pose>
+    <model name="Caja">
+      <pose>1.0 0.0 0.35 0 0 0</pose>
       <static>true</static>
       <link name="link">
         <pose>0 0 0 0 0 0</pose>
         <collision name="collision">
           <geometry>
-            <cylinder>
+            <box>
+              <size>0.56 0.52 0.7</size>
+            </box>
+            <!-- <cylinder>
               <radius>0.1</radius>
               <length>1.0</length>
-            </cylinder>
+            </cylinder> -->
           </geometry>
         </collision>
         <visual name="visual">
           <geometry>
-            <cylinder>
+            <box>
+              <size>0.56 0.52 0.7</size>
+            </box>  
+            <!-- <cylinder>
               <radius>0.1</radius>
               <length>1.0</length>
-            </cylinder>
+            </cylinder> -->
           </geometry>
-          <material>
-            <ambient>1 0 0 1</ambient>
-            <diffuse>1 0 0 1</diffuse>
-            <specular>1 1 1 1</specular>
-          </material>
+          <!-- Textura para que COLMAP encuentre puntos (generar_texturas_gazebo.py) -->
+          <material><ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse><specular>0.1 0.1 0.1 1</specular><pbr><metal><albedo_map>model://texturas_lab/materials/textures/caja.jpg</albedo_map><roughness>0.8</roughness><metalness>0.0</metalness></metal></pbr></material>
         </visual>
       </link>
     </model>
 
-    <!-- Bote de pastillas -->
+    <!-- Bote de pastillas
     <model name="BotePastillas">
-      <pose>1.0 0.0 1.0 0 0 0</pose>
+      <pose>1.0 0.0 0.7 0 0 0</pose>
       <static>true</static>
       <link name="link">
         <visual name="visual">
@@ -271,6 +274,95 @@
             </mesh>
           </geometry>
         </collision>
+      </link>
+    </model> -->
+
+    <!-- Contenedor de 25 cm sobre la caja: centro a 0.7 + 0.125 m -->
+    <model name='ObjetoInteres'>
+      <pose>1.0 0.0 0.825 0 0 0</pose>
+      <static>true</static>
+      <link name='link'>
+        <pose>0 0 0 0 0 0</pose>
+        <collision name='collision'>
+          <geometry>
+            <cylinder>
+              <radius>0.1</radius>
+              <length>0.45</length>
+            </cylinder>
+          </geometry>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <cylinder>
+              <radius>0.1</radius>
+              <length>0.45</length>
+            </cylinder>
+          </geometry>
+          <material><ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse><specular>0.1 0.1 0.1 1</specular><pbr><metal><albedo_map>model://texturas_lab/materials/textures/cilindro.jpg</albedo_map><roughness>0.6</roughness><metalness>0.0</metalness></metal></pbr></material>
+        </visual>
+      </link>
+    </model>
+
+
+    <!-- Modelo de Corral (4x4 metros) -->
+    <model name="corral_dron">
+      <static>true</static>
+      
+      <!-- Tapete del piso: solo visual (sin colisión), textura para COLMAP -->
+      <link name="tapete">
+        <pose>0 0 0.001 0 0 0</pose>
+        <visual name="visual">
+          <geometry><box><size>4 4 0.002</size></box></geometry>
+          <material><ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse><specular>0.1 0.1 0.1 1</specular><pbr><metal><albedo_map>model://texturas_lab/materials/textures/piso.jpg</albedo_map><roughness>0.95</roughness><metalness>0.0</metalness></metal></pbr></material>
+        </visual>
+      </link>
+
+      <!-- Pared Norte -->
+      <link name="pared_norte">
+        <pose>2 0 0.3 0 0 0</pose>
+        <collision name="collision">
+          <geometry><box><size>0.1 4 0.6</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.1 4 0.6</size></box></geometry>
+          <material><ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse><specular>0.1 0.1 0.1 1</specular><pbr><metal><albedo_map>model://texturas_lab/materials/textures/madera.jpg</albedo_map><roughness>0.9</roughness><metalness>0.0</metalness></metal></pbr></material>
+        </visual>
+      </link>
+
+      <!-- Pared Sur -->
+      <link name="pared_sur">
+        <pose>-2 0 0.3 0 0 0</pose>
+        <collision name="collision">
+          <geometry><box><size>0.1 4 0.6</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.1 4 0.6</size></box></geometry>
+          <material><ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse><specular>0.1 0.1 0.1 1</specular><pbr><metal><albedo_map>model://texturas_lab/materials/textures/madera.jpg</albedo_map><roughness>0.9</roughness><metalness>0.0</metalness></metal></pbr></material>
+        </visual>
+      </link>
+
+      <!-- Pared Este -->
+      <link name="pared_este">
+        <pose>0 2 0.3 0 0 0</pose>
+        <collision name="collision">
+          <geometry><box><size>4 0.1 0.6 </size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>4 0.1 0.6</size></box></geometry>
+          <material><ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse><specular>0.1 0.1 0.1 1</specular><pbr><metal><albedo_map>model://texturas_lab/materials/textures/madera.jpg</albedo_map><roughness>0.9</roughness><metalness>0.0</metalness></metal></pbr></material>
+        </visual>
+      </link>
+
+      <!-- Pared Oeste -->
+      <link name="pared_oeste">
+        <pose>0 -2 0.3 0 0 0</pose>
+        <collision name="collision">
+          <geometry><box><size>4 0.1 0.6</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>4 0.1 0.6</size></box></geometry>
+          <material><ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse><specular>0.1 0.1 0.1 1</specular><pbr><metal><albedo_map>model://texturas_lab/materials/textures/madera.jpg</albedo_map><roughness>0.9</roughness><metalness>0.0</metalness></metal></pbr></material>
+        </visual>
       </link>
     </model>
 
