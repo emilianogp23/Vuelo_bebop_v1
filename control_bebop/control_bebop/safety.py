@@ -1,5 +1,5 @@
 """
-Lógica de seguridad pura (sin ROS) para el Bebop 2 real.
+Lógica de seguridad pura (sin ROS) para el Bebop 2, real y simulado.
 
 Comandos ``cmd`` = (pitch, roll, gaz, yaw_rate) normalizados en [-1, 1],
 con la misma semántica que ``geometry_msgs/Twist`` del driver:
@@ -9,6 +9,7 @@ con la misma semántica que ``geometry_msgs/Twist`` del driver:
     angular.z → yaw rate (+ CCW)
 """
 
+import dataclasses
 import math
 from dataclasses import dataclass
 
@@ -25,9 +26,17 @@ class GeofenceParams:
 
     enabled: bool = True
     half_size: float = 2.0       # Área de 4x4 m → ±2.0 m
-    soft_margin: float = 0.5     # A partir de |p| >= half-soft: bloquea salir
     hard_margin: float = 0.3     # A partir de |p| >= half-hard: empuja dentro
-    push_cmd: float = 0.08       # Comando de empuje hacia el centro
+    push_cmd: float = 0.08       # Empuje mínimo hacia el centro
+    push_gain: float = 0.5       # Empuje extra por metro pasado del límite duro
+    # Antes del límite duro, la velocidad hacia afuera se limita a distancia/lookahead
+    # y el comando hacia afuera a brake_gain·(v_permitida − v): frena con tiempo pese
+    # al retardo del Bebop (0.2–0.9 s) y deja pasar la órbita junto al borde. Con los
+    # modelos identificados de los bags y el piloto empujando hacia afuera, el peor
+    # caso se detiene en |p| ≈ 2.02 m (test_geofence_stops_identified_bebop_models).
+    lookahead: float = 2.5       # s
+    brake_gain: float = 2.0
+    max_push: float = 0.4        # Tope del empuje y del freno
     max_altitude: float = 2.0    # Techo absoluto
     alt_soft_margin: float = 0.3  # z >= max-soft: bloquea subir
     alt_hard_margin: float = 0.15  # z >= max-hard: fuerza bajar
@@ -42,13 +51,14 @@ class GeofenceParams:
     min_z_outside_safe: float = 0.0
 
 
-def apply_geofence(cmd, pose, p):
+def apply_geofence(cmd, pose, p, vel=None):
     """Filtra un comando para que el dron no salga del área permitida.
 
     Args:
         cmd:  (pitch, roll, gaz, yaw_rate) en marco del cuerpo.
         pose: (x, y, z, yaw) en marco de despegue.
         p:    GeofenceParams.
+        vel:  (vx, vy) en marco de despegue, o None si no hay velocidad medida.
 
     Returns:
         (cmd_filtrado, lista_de_eventos)
@@ -58,24 +68,29 @@ def apply_geofence(cmd, pose, p):
         return (pitch, roll, gaz, yaw_rate), []
 
     x, y, z, yaw = pose
+    vx, vy = vel if vel is not None else (0.0, 0.0)
     events = []
 
     # Comando horizontal en marco de despegue
     wx, wy = rotate2d(pitch, roll, yaw)
-    soft = p.half_size - p.soft_margin
     hard = p.half_size - p.hard_margin
 
-    def _limit(w, pos, name):
-        if abs(pos) >= hard:
+    def _limit(w, pos, v, name):
+        out = math.copysign(1.0, pos)
+        v_out = v * out
+        dist = hard - abs(pos)
+        if dist <= 0.0:
             events.append(f'empuje_{name}')
-            return -math.copysign(p.push_cmd, pos)
-        if abs(pos) >= soft and w * pos > 0.0:
+            push = p.push_cmd + p.push_gain * -dist
+            return -out * min(p.max_push, max(push, p.brake_gain * v_out))
+        allowed = p.brake_gain * (dist / p.lookahead - v_out)
+        if w * out > allowed:
             events.append(f'bloqueo_{name}')
-            return 0.0
+            return max(allowed, -p.max_push) * out
         return w
 
-    wx = _limit(wx, x, 'x')
-    wy = _limit(wy, y, 'y')
+    wx = _limit(wx, x, vx, 'x')
+    wy = _limit(wy, y, vy, 'y')
 
     # Bajo y en el borde de la zona segura (o fuera): no alejarse y subir
     r = math.hypot(x, y)
@@ -107,6 +122,44 @@ def apply_geofence(cmd, pose, p):
         gaz = 0.0
 
     return (pitch, roll, gaz, yaw_rate), events
+
+
+class CommandGate:
+    """Último comando con watchdog y geocerca; lo usan real_drone_bridge y sim_odometry.
+
+    La geocerca actúa desde el takeoff hasta el land o el corte de motores, también
+    sobre los ceros del watchdog (hover). No actúa en tierra ni al aterrizar: ahí
+    empujar hacia arriba (zona segura) impediría aterrizar fuera de ella.
+    """
+
+    def __init__(self, params, timeout=0.3):
+        self.params = params
+        self.timeout = timeout
+        self.cmd = (0.0, 0.0, 0.0, 0.0)
+        self.t = None
+        self.flying = False
+
+    def command(self, cmd, t):
+        self.cmd = tuple(float(c) for c in cmd)
+        self.t = t
+
+    def takeoff(self):
+        self.flying = True
+
+    def land(self):
+        self.flying = False
+
+    def output(self, now, pose, vel=None, z_measured=True):
+        """(comando, eventos). Ceros si el último comando es más viejo que timeout."""
+        stale = self.t is None or now - self.t >= self.timeout
+        cmd = (0.0, 0.0, 0.0, 0.0) if stale else self.cmd
+        if not self.flying or pose is None:
+            return cmd, []
+        p = self.params
+        if not z_measured:
+            # Con la z integrada la altura mínima empujaría hacia arriba sin motivo
+            p = dataclasses.replace(p, min_z_outside_safe=0.0)
+        return apply_geofence(cmd, pose, p, vel)
 
 
 def scale_trim_clamp(cmd, gains, trims, limits):

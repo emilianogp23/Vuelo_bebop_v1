@@ -14,9 +14,13 @@ Reporta:
       y la altura medida /bebop/altitude si el bag la tiene.
     - XY final de odometría: si se aterrizó en el origen, es el error acumulado.
     - Identificación del modelo pitch → velocidad:  dv/dt = a·u(t-d) - b·v
+    - Corrección visual: mediciones ArUco aceptadas, huecos sin marcadores y,
+      en simulación (/bebop1/pose_gt), error de la pose del control, de la
+      corregida (modo sombra) y de cada medición contra la posición real.
 
 Uso (después de `source /opt/ros/humble/setup.bash`):
     python3 analisis_bag.py bags/vuelo_real_YYYYMMDD_HHMMSS
+    python3 analisis_bag.py bags/vuelo_sim_YYYYMMDD_HHMMSS
     python3 analisis_bag.py <carpeta_o_.db3> --approach 20
 """
 import argparse
@@ -31,6 +35,7 @@ STATES = {0: 'IDLE', 1: 'AUTOMATIC', 2: 'TAKING_OFF', 3: 'LANDING',
           4: 'EMERGENCY', 5: 'HOVER', 6: 'MANUAL', 7: 'RECOVERY',
           8: 'RETURN_HOME'}
 AUTOMATIC = 1
+AIR_STATES = (1, 5, 6, 7, 8)   # AUTOMATIC, HOVER, MANUAL, RECOVERY, RETURN_HOME
 
 
 def _yaw(q):
@@ -38,8 +43,11 @@ def _yaw(q):
                       1.0 - 2.0 * (q.y * q.y + q.z * q.z))
 
 
-def load(path):
-    """Devuelve {tópico: [(t, valores...)]} con t en segundos desde el inicio."""
+def load(path, only=None):
+    """Devuelve {tópico: [(t, valores...)]} con t en segundos desde el inicio.
+
+    ``only``: solo deserializar estos tópicos (los bags de simulación traen la pose a ~1 kHz).
+    """
     from rclpy.serialization import deserialize_message
     from rosidl_runtime_py.utilities import get_message
 
@@ -59,9 +67,17 @@ def load(path):
         t = ts * 1e-9
         t0 = t if t0 is None else t0
         t -= t0
+        if only is not None and name not in only:
+            continue
         m = deserialize_message(raw, mtype)
-        if name in ('/bebop1/pose', '/goal'):
+        if name in ('/bebop1/pose', '/bebop1/pose_gt', '/goal'):
             row = (t, m.position.x, m.position.y, m.position.z, _yaw(m.orientation))
+        elif name in ('/vision/fused_pose', '/vision/odom_pose'):
+            p = m.pose
+            row = (t, p.position.x, p.position.y, p.position.z, _yaw(p.orientation))
+        elif name == '/vision/onboard/pose':
+            p = m.pose.pose
+            row = (t, p.position.x, p.position.y, p.position.z, _yaw(p.orientation))
         elif name == '/odom_local':
             p = m.pose.pose
             row = (t, p.position.x, p.position.y, p.position.z,
@@ -71,7 +87,7 @@ def load(path):
             row = (t, p.position.x, p.position.y, p.position.z, _yaw(p.orientation))
         elif name in ('/bebop/cmd_vel', '/bridge/cmd_vel_raw', '/goal_vel'):
             row = (t, m.linear.x, m.linear.y, m.linear.z, m.angular.z)
-        elif name in ('/flight_state', '/bebop/altitude', '/trajectory_stalled'):
+        elif name in ('/flight_state', '/bebop/altitude', '/trajectory_stalled', '/vision/lock'):
             row = (t, float(m.data))
         else:
             continue
@@ -117,6 +133,76 @@ def identify(odom, cmd, t_a, t_b, ts=0.2):
         if best is None or r2 > best[3]:
             best = (k * ts, coef[0], -coef[1], r2)
     return best
+
+
+def _xy_error(series, gt, mask_t):
+    """Error XY de series contra gt (interpolada) en los instantes de series dentro de mask_t."""
+    s = series[mask_t(series[:, 0])]
+    if not len(s):
+        return None
+    gx = np.interp(s[:, 0], gt[:, 0], gt[:, 1])
+    gy = np.interp(s[:, 0], gt[:, 0], gt[:, 2])
+    return np.hypot(s[:, 1] - gx, s[:, 2] - gy)
+
+
+def vision_report(d, pose):
+    """¿Se está corrigiendo la odometría con los ArUco?"""
+    if '/vision/onboard/pose' not in d and '/vision/fused_pose' not in d:
+        return
+    print('\n== Corrección visual (ArUco)')
+    shadow = '/vision/fused_pose' in d   # solo se publica en modo sombra
+    print('  modo: ' + ('sombra (/bebop1/pose = odometría sola; corregida en /vision/fused_pose)'
+                        if shadow else 'visión al mando (/bebop1/pose = corregida)'))
+    # En el aire = estados que siguen una posición (no despegue/aterrizaje/piso)
+    air = [(a, b) for a, b, st in state_intervals(d['/flight_state']) if st in AIR_STATES]
+    if not air:
+        print('  sin tramo en el aire (HOVER, AUTOMATIC, ...)')
+        return
+
+    def in_air(t):
+        return np.any([(t >= a) & (t <= b) for a, b in air], axis=0)
+
+    meas = d.get('/vision/onboard/pose')
+    if meas is None:
+        print('  sin /vision/onboard/pose: ¿corría aruco_localizer? sin mediciones no hay corrección')
+    else:
+        gap = 0.0
+        for a, b in air:
+            tm = meas[(meas[:, 0] >= a) & (meas[:, 0] <= b), 0]
+            gap = max(gap, np.diff(np.concatenate(([a], tm, [b]))).max())
+        print(f'  mediciones en el aire: {int(in_air(meas[:, 0]).sum())} en '
+              f'{sum(b - a for a, b in air):.0f} s | hueco máximo sin marcadores {gap:.1f} s '
+              '(con ~15 s se pierde el lock)')
+    if '/vision/lock' in d:
+        lk = d['/vision/lock']
+        lk = lk[in_air(lk[:, 0])]
+        if len(lk):
+            print(f'  sin lock en el aire: {100 * (1 - lk[:, 1].mean()):.0f} % del tiempo')
+
+    gt = d.get('/bebop1/pose_gt')
+    if gt is None:
+        if shadow:
+            f = d['/vision/fused_pose'][-1]
+            print(f'  final: odometría ({pose[-1, 1]:+.2f}, {pose[-1, 2]:+.2f}) | corregida '
+                  f'({f[1]:+.2f}, {f[2]:+.2f}) m. Medir con cinta dónde aterrizó: la corregida '
+                  'debe coincidir (< 10 cm)')
+        return
+    print('  error XY contra la posición real (/bebop1/pose_gt), en el aire:')
+    rows = [('/bebop1/pose (odometría sola)' if shadow else '/bebop1/pose (corregida)', pose)]
+    if shadow:
+        rows.append(('/vision/fused_pose (corregida)', d['/vision/fused_pose']))
+    elif '/vision/odom_pose' in d:
+        rows.append(('/vision/odom_pose (odometría sola)', d['/vision/odom_pose']))
+    for label, series in rows:
+        e = _xy_error(series, gt, in_air)
+        if e is not None:
+            print(f'    {label:32s} media {e.mean():.3f} m | máx {e.max():.3f} m | '
+                  f'final {e[-1]:.3f} m')
+    if meas is not None:
+        e = _xy_error(meas, gt, in_air)
+        if e is not None:
+            print(f'    {"mediciones ArUco":32s} mediana {np.median(e):.3f} m | '
+                  f'> 0.15 m: {int((e > 0.15).sum())} de {len(e)}')
 
 
 def main():
@@ -190,7 +276,9 @@ def main():
         print('  Sin /bebop/altitude: driver sin el parche de altura (patches/)')
     print(f'  z de /bebop1/pose: máx {pose[:, 3].max():.2f} m | final {pose[-1, 3]:+.2f} m')
 
-    print('\n== Posición final (odometría)')
+    vision_report(d, pose)
+
+    print('\n== Posición final (/bebop1/pose)')
     print(f'  x {pose[-1, 1]:+.2f} m, y {pose[-1, 2]:+.2f} m, distancia al despegue '
           f'{math.hypot(pose[-1, 1], pose[-1, 2]):.2f} m')
     print('  Si aterrizó en el punto de despegue, esto es el error acumulado de la odometría.')

@@ -73,6 +73,9 @@ class TrajectoryPlanner(Node):
         # escalón en z). La z del Bebop es velocidad integrada y deriva, así
         # que un circle_height absoluto no es fiable tras ~30 s de vuelo.
         self.declare_parameter('hold_entry_altitude', True)
+        # Piso de la altura de entrada: por encima de min_z_outside_safe de la
+        # geocerca, si no la órbita (fuera de la zona segura) pelea con ella
+        self.declare_parameter('min_entry_altitude', 0.5)
         self.declare_parameter('circle_speed', 0.20)   # Velocidad angular (rad/s)
         self.declare_parameter('arena_half_size', 1.8)  # Mitad del lado de la arena (m)
         self.declare_parameter('safety_margin', 0.20)   # Margen respecto al borde (m)
@@ -109,6 +112,7 @@ class TrajectoryPlanner(Node):
         self.height_param = self.get_parameter('circle_height').value
         self.height = self.height_param
         self.hold_entry_alt = self.get_parameter('hold_entry_altitude').value
+        self.min_entry_alt = self.get_parameter('min_entry_altitude').value
         self.omega = self.get_parameter('circle_speed').value
         self.arena = self.get_parameter('arena_half_size').value
         self.margin = self.get_parameter('safety_margin').value
@@ -243,7 +247,7 @@ class TrajectoryPlanner(Node):
                 self.orbit_started = False
                 if self.hold_entry_alt:
                     # Sin escalón en z: mantener la altura actual
-                    self.height = max(0.5, min(1.8, self.current_z))
+                    self.height = max(self.min_entry_alt, min(1.8, self.current_z))
                 else:
                     self.height = self.height_param
                 self._begin_approach()

@@ -16,7 +16,7 @@ def generate_launch_description():
     cfg = os.path.join(pkg, 'config', 'real_drone.yaml')
     return LaunchDescription([
         Node(package='control_bebop', executable='trajectory_planner',
-             name='trajectory_controller', parameters=[cfg], output='screen'),
+             name='trajectory_planner', parameters=[cfg], output='screen'),
         Node(package='control_bebop', executable='trajectory_preview',
              name='trajectory_preview', parameters=[cfg, {'show_plot': False}],
              output='screen'),

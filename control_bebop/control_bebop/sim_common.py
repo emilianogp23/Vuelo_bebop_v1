@@ -6,8 +6,11 @@ Partes comunes de los dos launches de simulación.
 
 Cada launch solo se encarga de lo que depende de su versión de Gazebo
 (cómo arrancar el simulador y el puente ROS↔Gazebo). Los nodos del sistema,
-sus parámetros (config/sim.yaml), la grabación del bag y las rutas viven aquí
-para que las dos máquinas no se desincronicen.
+sus parámetros, la grabación del bag y las rutas viven aquí para que las dos
+máquinas no se desincronicen.
+
+Parámetros: config/real_drone.yaml y encima config/sim.yaml, que solo cambia
+lo propio de Gazebo. Así el mando, los estados y la órbita son los del vuelo real.
 """
 
 import getpass
@@ -27,8 +30,11 @@ WORLD_NAME = 'bebop1.sdf'
 
 # Tópicos de la simulación que se graban (/bebop1/odom lo publica odom_viewer)
 SIM_BAG_TOPICS = [
-    '/bebop1/pose', '/bebop1/odom', '/goal', '/goal_vel', '/flight_state',
-    '/bebop1/cmd_vel', '/trajectory_done', '/joy', '/joy_cmd',
+    '/bebop1/pose', '/bebop1/pose_gt', '/bebop1/odom', '/goal', '/goal_vel', '/flight_state',
+    '/bebop1/cmd_vel', '/bridge/cmd_vel_raw', '/trajectory_done', '/trajectory_stalled',
+    '/joy', '/joy_cmd', '/joy_commands', '/deadman_active',
+    '/vision/onboard/pose', '/vision/fused_pose', '/vision/odom_pose', '/vision/lock',
+    '/vision/reset',
 ]
 
 
@@ -41,13 +47,22 @@ def declare_sim_arguments():
                               description='Gazebo sin ventana (solo servidor)'),
         DeclareLaunchArgument('record_bag', default_value='true',
                               description='Grabar un bag en control_bebop/bags'),
-        DeclareLaunchArgument('gui', default_value='true',
+        DeclareLaunchArgument('launch_gui', default_value='true',
                               description='Abrir la ventana de odometría'),
+        DeclareLaunchArgument('launch_plot3d', default_value='true',
+                              description='Vista 3D (plot_3d) con las mediciones ArUco'),
+        DeclareLaunchArgument('vision_shadow', default_value='',
+                              description='true|false; vacío = el de real_drone.yaml'),
     ]
 
 
 def is_true(context, name):
     return LaunchConfiguration(name).perform(context).lower() in ('true', '1', 'yes')
+
+
+def bridge_config():
+    """Puente ROS↔Gazebo: la pose exacta va a /bebop1/pose_gt (ver sim_odometry)."""
+    return os.path.join(get_package_share_directory('control_bebop'), 'config', 'sim_bridge.yaml')
 
 
 def world_path():
@@ -113,7 +128,11 @@ def gz_args(world, context, extra=''):
 def sim_nodes(context):
     """Nodos del sistema de control, iguales en las dos máquinas."""
     share = get_package_share_directory('control_bebop')
-    sim_cfg = os.path.join(share, 'config', 'sim.yaml')
+    sim_cfg = [os.path.join(share, 'config', 'real_drone.yaml'),
+               os.path.join(share, 'config', 'sim.yaml')]
+    shadow = LaunchConfiguration('vision_shadow').perform(context).lower()
+    if shadow in ('true', 'false'):
+        sim_cfg.append({'vision_shadow': shadow == 'true'})
     joy_cfg = os.path.join(share, 'config', 'ps5_dualsense.yaml')
     use_joy = IfCondition(LaunchConfiguration('use_joystick'))
 
@@ -123,7 +142,8 @@ def sim_nodes(context):
              parameters=[{'robot_names': '["bebop1"]',
                           'initial_conditions': '[[0.0, 0.0, 0.0, 0.0]]'}]),
         Node(package='control_bebop', executable='flight_manager',
-             name='flight_manager', output='screen', parameters=[sim_cfg]),
+             name='flight_manager', output='screen', parameters=sim_cfg,
+             remappings=[('cmd_takeoff', '/bridge/takeoff'), ('cmd_land', '/bridge/land')]),
         Node(package='joy', executable='joy_node', name='joy_node',
              output='screen', condition=use_joy,
              parameters=[{'device_id': 0, 'deadzone': 0.05,
@@ -132,19 +152,29 @@ def sim_nodes(context):
              name='joystick_interface', output='screen', condition=use_joy,
              parameters=[joy_cfg]),
         Node(package='control_bebop', executable='control_PID',
-             name='control_PID', output='screen', parameters=[sim_cfg]),
+             name='control_PID', output='screen', parameters=sim_cfg),
         Node(package='control_bebop', executable='trajectory_planner',
-             name='trajectory_planner', output='screen', parameters=[sim_cfg]),
+             name='trajectory_planner', output='screen', parameters=sim_cfg),
         Node(package='control_bebop', executable='nodo_video',
-             name='nodo_video', output='screen', parameters=[sim_cfg]),
+             name='nodo_video', output='screen', parameters=sim_cfg),
+        # Pose exacta → odometría con deriva corregida con los ArUco; además
+        # pasa /bridge/cmd_vel_raw a Gazebo con la geocerca, como el bridge real
+        Node(package='control_bebop', executable='sim_odometry',
+             name='sim_odometry', output='screen', parameters=sim_cfg),
+        Node(package='control_bebop', executable='aruco_localizer',
+             name='aruco_localizer', output='screen', parameters=sim_cfg),
         # Convierte /bebop1/pose en /bebop1/odom con velocidades
         Node(package='control_bebop', executable='odom_viewer',
              name='odom_viewer', output='log', parameters=[{'log_rate': 2.0}]),
     ]
-    if is_true(context, 'gui'):
+    if is_true(context, 'launch_gui'):
         actions.append(
             Node(package='control_bebop', executable='gui_odometria',
-                 name='gui_odometria', output='log', parameters=[sim_cfg]))
+                 name='gui_odometria', output='log', parameters=sim_cfg))
+    if is_true(context, 'launch_plot3d'):
+        actions.append(
+            Node(package='control_bebop', executable='plot_3d',
+                 name='plot_3d', output='log', parameters=sim_cfg))
     if is_true(context, 'record_bag'):
         stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         bag = os.path.join(data_dir('bags'), f'vuelo_sim_{stamp}')

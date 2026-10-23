@@ -42,8 +42,7 @@ def _build(context):
         executable='parameter_bridge',
         name='ros_gz_bridge',
         output='screen',
-        parameters=[{'config_file': os.path.join(
-            get_package_share_directory('bebop_demo'), 'config', 'bebop1.yaml')}],
+        parameters=[{'config_file': sim_common.bridge_config()}],
     )
 
     return (sim_common.distro_warning('humble', 'sim_flight_humble', 'main_flight.launch.py')

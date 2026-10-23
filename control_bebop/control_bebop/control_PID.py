@@ -449,11 +449,12 @@ class DroneController(Node):
             self.pub_vel.publish(self.manual_joy)
             return
 
-        # Dron real: despegue, aterrizaje y hover los hace el autopiloto
-        # nativo del Bebop (comando cero = mantener posición con flujo óptico)
-        if (self.get_parameter('use_real_drone').value
-                and self.estado in (TAKING_OFF, LANDING, HOVER)
-                and not self.get_parameter('pid_in_hover').value):
+        # HOVER = comando cero en real y simulación: el Bebop sostiene su posición
+        # con flujo óptico y el controlador de velocidad de Gazebo la mantiene.
+        # Despegue y aterrizaje solo los hace el autopiloto del dron real.
+        native = (HOVER,) if not self.get_parameter('use_real_drone').value else (
+            TAKING_OFF, LANDING, HOVER)
+        if self.estado in native and not self.get_parameter('pid_in_hover').value:
             self.pub_vel.publish(twist)
             return
 

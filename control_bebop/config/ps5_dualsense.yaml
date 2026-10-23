@@ -12,16 +12,17 @@ joystick_interface:
     # ── Sticks ──
     axis_pitch: 1            # Stick izquierdo Y (avance/retroceso)
     axis_roll: 0             # Stick izquierdo X (lateral izq/der)
-    axis_throttle: 7         # Stick derecho Y (subir/bajar)
-    axis_yaw: 6              # Stick derecho X (rotación yaw)
+    axis_throttle: 7         # Cruceta vertical (subir/bajar); stick derecho Y sería 4
+    axis_yaw: 6              # Cruceta horizontal (giro); stick derecho X sería 3
 
     # ── Botones ──
     btn_takeoff: 0           # × (Cruz) — Despegar
     btn_land: 1              # ○ (Círculo) — Aterrizar
-    btn_emergency: 2         # △ (Triángulo) — Parada de emergencia
+    btn_emergency: 2         # △ (Triángulo) — Aterrizaje inmediato; L1+R1+△ corta motores
     btn_mode_toggle: 3       # □ (Cuadrado) — Alternar Auto/Manual
     btn_return_home: 4       # L1 — Regresar a home
     btn_auto_start: 5        # R1 — Iniciar trayectoria automática
+    btn_flattrim: 8          # Share — FlatTrim (solo en tierra)
     btn_reset: 9             # Options — Reset desde Emergency
 
     # ── Límites de velocidad ──

@@ -53,7 +53,7 @@ def pose_msg(stamp, x, y, z, yaw, sigma_xy, sigma_yaw):
 class ArucoLocalizer(Node):
     def __init__(self):
         super().__init__('aruco_localizer')
-        self.declare_parameter('map_file', '')            # vacío = config/aruco_map.yaml
+        self.declare_parameter('map_file', '')            # vacío = aruco_map.yaml
         self.declare_parameter('image_topic', '/bebop/camera/image_raw')
         self.declare_parameter('camera_info_topic', '/bebop/camera/camera_info')
         self.declare_parameter('rate', 15.0)              # Hz de procesamiento
@@ -64,13 +64,17 @@ class ArucoLocalizer(Node):
         self.declare_parameter('cam_offset_x', 0.09)      # cámara por delante del centro (m)
         self.declare_parameter('min_marker_px', 18.0)
         self.declare_parameter('max_reproj_px', 2.0)
+        self.declare_parameter('min_markers', 1)          # 2 en el real: con uno solo falla 0.3–0.5 m
         self.declare_parameter('max_distance', 4.5)
         self.declare_parameter('sigma_xy', 0.03)          # a 1.5 m con un marcador
         self.declare_parameter('sigma_yaw_deg', 2.0)
+        # Simulación: la imagen trae hora de Gazebo y la odometría del reloj del nodo
+        # shortcut: ignora la latencia del render (~1 cuadro), usar /clock si importa
+        self.declare_parameter('stamp_with_receive_time', False)
 
         gp = self.get_parameter
-        path = gp('map_file').value or config_file('aruco_map.yaml')
-        dict_name, self.map, _ = load_marker_map(path)
+        path = config_file(gp('map_file').value or 'aruco_map.yaml')   # nombre en config/ o ruta
+        dict_name, self.map = load_marker_map(path)
         self.detector = make_detector(dict_name)
         self.period = 1.0 / gp('rate').value
         self.tilt = gp('camera_tilt_deg').value
@@ -81,9 +85,11 @@ class ArucoLocalizer(Node):
         self.cam_offset_x = gp('cam_offset_x').value
         self.min_px = gp('min_marker_px').value
         self.max_err = gp('max_reproj_px').value
+        self.min_markers = gp('min_markers').value
         self.max_dist = gp('max_distance').value
         self.sigma_xy = gp('sigma_xy').value
         self.sigma_yaw = math.radians(gp('sigma_yaw_deg').value)
+        self.receive_stamp = gp('stamp_with_receive_time').value
 
         self.bridge = CvBridge()
         self.K = None
@@ -132,7 +138,8 @@ class ArucoLocalizer(Node):
     def image_cb(self, msg):
         if self.K is None:
             return
-        t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        stamp = self.get_clock().now().to_msg() if self.receive_stamp else msg.header.stamp
+        t = stamp.sec + stamp.nanosec * 1e-9
         if t - self.last_proc < self.period:
             return
         self.last_proc = t
@@ -141,7 +148,7 @@ class ArucoLocalizer(Node):
         gray = self.bridge.imgmsg_to_cv2(msg, desired_encoding='mono8')
         found = {i: c for i, c in detect(self.detector, gray).items()
                  if i in self.map and marker_side_px(c) >= self.min_px}
-        if not found:
+        if len(found) < max(1, self.min_markers):
             return
         obj = np.vstack([self.map[i] for i in found])
         img = np.vstack(list(found.values()))
@@ -154,7 +161,7 @@ class ArucoLocalizer(Node):
             return
         x, y, z, yaw = onboard_drone_pose(R_wc, cam, self.cam_offset_x)
         sxy, syaw = measurement_sigma(dist, len(found), self.sigma_xy, self.sigma_yaw)
-        self.pub.publish(pose_msg(msg.header.stamp, x, y, z, yaw - self.pan, sxy, syaw))
+        self.pub.publish(pose_msg(stamp, x, y, z, yaw - self.pan, sxy, syaw))
         self.stats['poses'] += 1
 
     def status_cb(self):

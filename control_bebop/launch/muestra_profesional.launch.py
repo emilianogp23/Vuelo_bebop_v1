@@ -5,7 +5,7 @@ Ejecuta:
   1. ros2_bebop_driver (opcional si launch_driver:=true)
   2. real_drone_bridge (transformación al marco de despegue y publicación de odometría calibrada)
   3. joy_node + joystick_interface (Mando PS5 DualSense)
-  4. demo_safety_manager (Garantiza modo muestra: motores activos en ralentí sin aceleración brusca)
+  4. demo_safety_manager (L2+× despega y el dron queda en hover nativo a ~1 m; mismos botones que el vuelo real)
   5. muestra_odometria_gui (Suite gráfica PyQt5 con mapa espacial, horizonte artificial, telemetría y cámara YOLO)
   6. ros2 bag record (opcional para registrar la sesión)
 
@@ -72,7 +72,7 @@ def _build_nodes(context):
             output='screen',
         ),
 
-        # 3. Guardián de seguridad en modo muestra (Neutralizador de PID y gestor de arranque seguro)
+        # 3. Despegue, hover nativo y aterrizaje por el bridge
         Node(
             package='control_bebop',
             executable='demo_safety_manager',
@@ -110,7 +110,7 @@ def _build_nodes(context):
 
         # 7. Grabación opcional de bag
         ExecuteProcess(
-            cmd=['ros2', 'bag', 'record', '-o', bag_path,
+            cmd=['ros2', 'bag', 'record', '-s', 'sqlite3', '-o', bag_path,
                  '/bebop/odom', '/bebop1/pose', '/odom_local',
                  '/joy', '/joy_cmd', '/joy_commands',
                  '/demo/status', '/demo/command'],

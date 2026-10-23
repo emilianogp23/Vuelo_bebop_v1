@@ -1,0 +1,22 @@
+# Calibrado con calibrar_camara (ChArUco) el 2026-10-23 10:45
+# 30 vistas, error RMS 0.606 px, tilt -28.0°
+image_width: 856
+image_height: 480
+camera_name: bebop_front
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [530.420019, 0.000000, 432.272643, 0.000000, 521.423274, 239.127257, 0.000000, 0.000000, 1.000000]
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [0.020249, -0.044683, -0.000005, 0.001892, 0.000000]
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data: [1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000]
+projection_matrix:
+  rows: 3
+  cols: 4
+  data: [526.488342, 0.000000, 434.087423, 0.000000, 0.000000, 521.899475, 238.626682, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000]

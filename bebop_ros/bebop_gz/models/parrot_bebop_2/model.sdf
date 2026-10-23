@@ -91,7 +91,8 @@
 
 
       <sensor name="rgb_camera_sensor" type="camera">
-        <pose relative_to='base_link'>0.113 0 0 0 0 0</pose>
+        <!-- Inclinada 28° hacia abajo (pitch +), como camera_tilt_deg del Bebop real -->
+        <pose relative_to='base_link'>0.113 0 0 0 0.4887 0</pose>
         <always_on>1</always_on>
         <update_rate>15</update_rate>
         <camera>

@@ -95,19 +95,34 @@ index 11252f4..b8f66f5 100644
  
      void publishCamera(void);
      void publishOdometry(void);
+diff --git a/include/ros2_bebop_driver/video_decoder.hpp b/include/ros2_bebop_driver/video_decoder.hpp
+index 4e5e520..5eb8138 100644
+--- a/include/ros2_bebop_driver/video_decoder.hpp
++++ b/include/ros2_bebop_driver/video_decoder.hpp
+@@ -48,7 +48,7 @@ class VideoDecoder {
+     uint8_t *frame = NULL;
+     unsigned int width = 0;
+     unsigned int height = 0;
+-    AVCodec *p_codec_ = NULL;
++    const AVCodec *p_codec_ = NULL;
+     AVCodecContext *p_codec_context_ = NULL;
+     AVPacket *p_packet_ = NULL;
+     AVFrame *p_frame_ = NULL;
 diff --git a/launch/bebop_node_launch.xml b/launch/bebop_node_launch.xml
-index 2aa43f5..5b72bfb 100644
+index 2aa43f5..ccecd67 100644
 --- a/launch/bebop_node_launch.xml
 +++ b/launch/bebop_node_launch.xml
-@@ -1,8 +1,10 @@
+@@ -1,8 +1,11 @@
  <launch>
  	<arg name="namespace" default="bebop"/>
  	<arg name="ip" default="192.168.42.1"/>
 +	<arg name="max_altitude" default="2.0"/>
++	<arg name="camera_calibration_file" default="package://ros2_bebop_driver/config/bebop2_camera_calib.yaml"/>
  	<node pkg="ros2_bebop_driver" exec="bebop_driver" name="bebop_driver" output="screen" namespace="$(var namespace)">
  		<param name="bebop_ip" value="$(var ip)"/>
+-		<param name="camera_calibration_file" value="package://ros2_bebop_driver/config/bebop2_camera_calib.yaml"/>
 +		<param name="max_altitude" value="$(var max_altitude)"/>
- 		<param name="camera_calibration_file" value="package://ros2_bebop_driver/config/bebop2_camera_calib.yaml"/>
++		<param name="camera_calibration_file" value="$(var camera_calibration_file)"/>
  	</node>
  </launch>
 diff --git a/src/ardrone3_state_callbacks.cpp b/src/ardrone3_state_callbacks.cpp

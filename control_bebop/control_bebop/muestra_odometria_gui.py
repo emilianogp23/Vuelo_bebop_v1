@@ -416,9 +416,9 @@ class DualSenseWidget(QWidget):
         btn_sq = len(self.buttons) > 3 and self.buttons[3] == 1
 
         btn_info = [
-            ("× (Armar)", btn_x, QColor(0, 230, 118), 10, 52),
+            ("× (Despegar)", btn_x, QColor(0, 230, 118), 10, 52),
             ("○ (Land)", btn_circle, QColor(255, 171, 0), 105, 52),
-            ("△ (Emerg)", btn_tri, QColor(255, 82, 82), 10, 78),
+            ("△ (Aterrizar)", btn_tri, QColor(255, 82, 82), 10, 78),
             ("□ (Modo)", btn_sq, QColor(0, 229, 255), 105, 78),
         ]
 
@@ -822,14 +822,14 @@ class MuestraOdometriaGUI(QMainWindow):
         foot_layout.setContentsMargins(10, 6, 10, 6)
         foot_layout.setSpacing(10)
 
-        self.btn_arm = QPushButton("🟢 ACTIVAR MOTORES (MODO MUESTRA)")
+        self.btn_arm = QPushButton("🛫 DESPEGAR (HOVER A ~1 m)")
         self.btn_arm.setStyleSheet(
             "background-color: #0e3a24; border: 1px solid #00e676; color: #00e676; font-size: 12px; font-weight: bold; padding: 10px;"
         )
         self.btn_arm.clicked.connect(self._cmd_arm)
         foot_layout.addWidget(self.btn_arm)
 
-        self.btn_disarm = QPushButton("🛬 APAGAR MOTORES (LAND)")
+        self.btn_disarm = QPushButton("🛬 ATERRIZAR")
         self.btn_disarm.setStyleSheet(
             "background-color: #3d2f09; border: 1px solid #ffd600; color: #ffd600; font-size: 12px; font-weight: bold; padding: 10px;"
         )

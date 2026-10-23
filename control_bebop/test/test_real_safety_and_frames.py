@@ -29,7 +29,7 @@ def test_z_disabled_leaves_gaz_untouched():
 def test_z_disabled_keeps_xy_limits():
     p = GeofenceParams(half_size=2.0, z_enabled=False)
     (pitch, _, _, _), events = apply_geofence((0.3, 0.0, 0.0, 0.0), (1.6, 0, 1.0, 0), p)
-    assert pitch == 0.0
+    assert 0.0 <= pitch < 0.1
     assert 'bloqueo_x' in events
     (pitch, _, _, _), events = apply_geofence((0.3, 0.0, 0.0, 0.0), (1.8, 0, 1.0, 0), p)
     assert pitch < 0.0
@@ -136,3 +136,79 @@ def test_safe_zone_allows_low_inside_and_high_outside():
         cmd, events = apply_geofence((0.2, 0.0, -0.1, 0.0), pose, p)
         assert cmd[0] == pytest.approx(0.2)
         assert not any(e.startswith('zona_segura') for e in events)
+
+
+# ── Geocerca con velocidad y CommandGate ──────────────────────
+def test_geofence_brakes_early_when_moving_out_fast():
+    p = GeofenceParams()
+    # En x=1.2 a 0.3 m/s hacia afuera: permitido 0.5/2.5 = 0.2 m/s → frena
+    (pitch, _, _, _), events = apply_geofence((0.2, 0.0, 0.0, 0.0), (1.2, 0, 1.2, 0), p,
+                                              vel=(0.3, 0.0))
+    assert pitch < 0.0 and 'bloqueo_x' in events
+    # Sin velocidad, en el mismo punto, no se toca el comando
+    (pitch, _, _, _), events = apply_geofence((0.2, 0.0, 0.0, 0.0), (1.2, 0, 1.2, 0), p)
+    assert pitch == pytest.approx(0.2) and not events
+
+
+def test_geofence_lets_orbit_pass_near_the_edge():
+    # Órbita de r 0.5 en (1, 0): llega a x = 1.5 casi sin velocidad radial
+    p = GeofenceParams()
+    (pitch, _, _, _), _ = apply_geofence((0.08, 0.0, 0.0, 0.0), (1.5, 0, 1.1, 0), p,
+                                         vel=(0.0, 0.05))
+    assert pitch == pytest.approx(0.08)
+
+
+def test_geofence_push_grows_with_depth_and_is_capped():
+    p = GeofenceParams()
+    pushes = [-apply_geofence((0.0,) * 4, (x, 0, 1.2, 0), p)[0][0] for x in (1.75, 2.0, 3.0)]
+    assert pushes[0] < pushes[1] < pushes[2] == pytest.approx(p.max_push)
+
+
+def test_geofence_lets_drone_come_back_inside():
+    p = GeofenceParams()
+    (pitch, _, _, _), _ = apply_geofence((-0.2, 0.0, 0.0, 0.0), (1.6, 0, 1.2, 0), p,
+                                         vel=(-0.1, 0.0))
+    assert pitch == pytest.approx(-0.2)
+
+
+def test_geofence_stops_identified_bebop_models():
+    # dv/dt = a·u(t−d) − b·v, rangos de los bags del 13–16 oct; piloto empujando afuera
+    import itertools
+    p = GeofenceParams()
+    dt, worst = 0.05, 0.0
+    for a, b, d in itertools.product((0.8, 1.9), (0.25, 1.1), (0.2, 0.9)):
+        for v0, pilot in ((0.3, 0.4), (0.5, 0.4), (0.6, 0.14), (0.3, 0.0)):
+            x, v, queue = 1.0, v0, [0.0] * int(round(d / dt) + 1)
+            for _ in range(int(30 / dt)):
+                u = apply_geofence((pilot, 0.0, 0.0, 0.0), (x, 0.0, 1.2, 0.0), p, (v, 0.0))[0][0]
+                queue.append(u)
+                v += (a * queue.pop(0) - b * v) * dt
+                x += v * dt
+                worst = max(worst, x)
+    assert worst < p.half_size + 0.05   # la valla está a ~2.45 m
+
+
+def test_command_gate_fences_hover_only_in_the_air():
+    from control_bebop.safety import CommandGate
+    gate = CommandGate(GeofenceParams(), timeout=0.3)
+    edge = (1.8, 0.0, 1.2, 0.0)
+    # En tierra: ceros sin geocerca (no se mandan comandos a un dron apagado)
+    assert gate.output(10.0, edge, (0.0, 0.0)) == ((0.0, 0.0, 0.0, 0.0), [])
+    gate.takeoff()
+    # Sin comando reciente (watchdog) la geocerca empuja igual hacia dentro
+    (pitch, _, _, _), events = gate.output(10.0, edge, (0.0, 0.0))
+    assert pitch < 0.0 and 'empuje_x' in events
+    gate.command((0.3, 0.0, 0.0, 0.0), 10.0)
+    assert gate.output(10.1, edge, (0.0, 0.0))[0][0] < 0.0
+    # Aterrizando fuera de la zona segura no se fuerza a subir
+    gate.land()
+    assert gate.output(10.2, (1.0, 0.0, 0.5, 0.0), (0.0, 0.0))[0][2] == 0.0
+
+
+def test_command_gate_ignores_min_altitude_without_measured_z():
+    from control_bebop.safety import CommandGate
+    gate = CommandGate(GeofenceParams(min_z_outside_safe=1.0))
+    gate.takeoff()
+    low_outside = (1.0, 0.0, 0.5, 0.0)
+    assert gate.output(0.0, low_outside, (0.0, 0.0), z_measured=True)[0][2] > 0.0
+    assert gate.output(0.0, low_outside, (0.0, 0.0), z_measured=False)[0][2] == 0.0

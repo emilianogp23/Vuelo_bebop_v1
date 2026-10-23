@@ -40,8 +40,7 @@ def _build(context):
 
     bridge = RosGzBridge(
         bridge_name='ros_gz_bridge',
-        config_file=os.path.join(
-            get_package_share_directory('bebop_demo'), 'config', 'bebop1.yaml'),
+        config_file=sim_common.bridge_config(),
     )
 
     return (sim_common.distro_warning('jazzy', 'main_flight', 'sim_flight_humble.launch.py')

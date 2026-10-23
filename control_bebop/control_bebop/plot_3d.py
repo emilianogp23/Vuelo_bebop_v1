@@ -7,7 +7,6 @@ objetivo, y en vivo:
     /bebop1/pose         trayectoria que usa el control (con su rumbo)
     /vision/fused_pose   trayectoria corregida por visión (modo sombra)
     /vision/onboard/pose mediciones de la cámara del Bebop (puntos)
-    /vision/ceiling/pose mediciones de la cámara del techo (puntos)
     /goal                setpoint actual
     /flight_state, /vision/lock en el título
 
@@ -38,30 +37,34 @@ def _yaw(q):
     return yaw_from_quaternion(q.x, q.y, q.z, q.w)
 
 
+# Parámetros y sus valores por defecto (también los usa scripts/replay_3d.py)
+PARAMS = {
+    'map_file': '',
+    'arena_x_max': 2.0,
+    'corral_height': 2.5,
+    'target_x': 1.0,
+    'target_y': 0.0,
+    'circle_radius': 0.5,
+    'circle_height': 1.2,      # solo para dibujar la órbita
+    'object_height': 0.95,     # caja 0.70 + bote 0.25
+    'object_size': 0.30,
+    'safe_zone_radius': 0.5,
+    'min_z_outside_safe': 1.0,
+    'trail_seconds': 120.0,
+    'rate': 5.0,
+}
+
+
 class Plot3DNode(Node):
     def __init__(self):
         super().__init__('plot_3d')
-        self.declare_parameter('map_file', '')
-        self.declare_parameter('arena_x_max', 2.0)
-        self.declare_parameter('corral_height', 2.5)
-        self.declare_parameter('target_x', 1.0)
-        self.declare_parameter('target_y', 0.0)
-        self.declare_parameter('circle_radius', 0.5)
-        self.declare_parameter('circle_height', 1.2)     # solo para dibujar la órbita
-        self.declare_parameter('object_height', 0.95)    # caja 0.70 + bote 0.25
-        self.declare_parameter('object_size', 0.30)
-        self.declare_parameter('safe_zone_radius', 0.5)
-        self.declare_parameter('min_z_outside_safe', 1.0)
-        self.declare_parameter('trail_seconds', 120.0)
-        self.declare_parameter('rate', 5.0)
+        for name, default in PARAMS.items():
+            self.declare_parameter(name, default)
         g = lambda n: self.get_parameter(n).value  # noqa: E731
-        self.p = {n: g(n) for n in (
-            'arena_x_max', 'corral_height', 'target_x', 'target_y', 'circle_radius',
-            'circle_height', 'object_height', 'object_size', 'safe_zone_radius',
-            'min_z_outside_safe', 'trail_seconds', 'rate')}
-        path = g('map_file') or config_file('aruco_map.yaml')
+        self.p = {n: g(n) for n in PARAMS if n != 'map_file'}
+        path = config_file(g('map_file') or 'aruco_map.yaml')   # nombre en config/ o ruta
         try:
-            _, self.markers, _ = load_marker_map(path)
+            _, self.markers = load_marker_map(path)
         except (OSError, TypeError):
             self.markers = {}
             self.get_logger().warn(f'Sin mapa de marcadores ({path})')
@@ -71,7 +74,6 @@ class Plot3DNode(Node):
         self.pose = deque(maxlen=n)        # (t, x, y, z)
         self.fused = deque(maxlen=n)
         self.onboard = deque(maxlen=300)
-        self.ceiling = deque(maxlen=300)
         self.yaw = 0.0
         self.goal = None
         self.state = None
@@ -81,8 +83,6 @@ class Plot3DNode(Node):
         self.create_subscription(PoseStamped, '/vision/fused_pose', self.fused_cb, 10)
         self.create_subscription(PoseWithCovarianceStamped, '/vision/onboard/pose',
                                  lambda m: self.meas_cb(m, self.onboard), 10)
-        self.create_subscription(PoseWithCovarianceStamped, '/vision/ceiling/pose',
-                                 lambda m: self.meas_cb(m, self.ceiling), 10)
         self.create_subscription(Pose, '/goal', self.goal_cb, 10)
         self.create_subscription(Int32, '/flight_state', self.state_cb, 10)
         self.create_subscription(Bool, '/vision/lock', self.lock_cb, 10)
@@ -113,7 +113,7 @@ class Plot3DNode(Node):
 
     def clear(self):
         with self.lock:
-            for b in (self.pose, self.fused, self.onboard, self.ceiling):
+            for b in (self.pose, self.fused, self.onboard):
                 b.clear()
 
     def snapshot(self):
@@ -121,7 +121,7 @@ class Plot3DNode(Node):
         t_min = time.time() - self.p['trail_seconds']
         with self.lock:
             return {k: [s[1:] for s in getattr(self, k) if s[0] >= t_min]
-                    for k in ('pose', 'fused', 'onboard', 'ceiling')}, self.yaw
+                    for k in ('pose', 'fused', 'onboard')}, self.yaw
 
 
 def _xyz(points):
@@ -188,7 +188,6 @@ def main(args=None):
     path_l, = ax.plot([], [], [], 'm-', lw=2, label='/bebop1/pose (control)')
     fused_l, = ax.plot([], [], [], 'c-', lw=1.5, label='Corregida por visión (sombra)')
     onboard_s = ax.scatter([], [], [], s=6, c='tab:blue', label='Visión a bordo')
-    ceiling_s = ax.scatter([], [], [], s=6, c='tab:orange', label='Cámara del techo')
     dot, = ax.plot([], [], [], 'mo', ms=8)
     goal_d, = ax.plot([], [], [], 'rx', ms=10, mew=2, label='Goal')
     head_l, = ax.plot([], [], [], 'r-', lw=2)
@@ -202,7 +201,6 @@ def main(args=None):
             path_l.set_data_3d(*_xyz(data['pose']))
             fused_l.set_data_3d(*_xyz(data['fused']))
             onboard_s._offsets3d = _xyz(data['onboard'])
-            ceiling_s._offsets3d = _xyz(data['ceiling'])
             if data['pose']:
                 x, y, z = data['pose'][-1]
                 dot.set_data_3d([x], [y], [z])

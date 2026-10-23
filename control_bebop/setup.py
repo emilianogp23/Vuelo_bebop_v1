@@ -61,9 +61,9 @@ setup(
             'control_camara = control_bebop.control_camara:main',
             'diagnostico_yolo = control_bebop.diagnostico_yolo:main',
             'aruco_localizer = control_bebop.aruco_localizer:main',
-            'ceiling_tracker = control_bebop.ceiling_tracker:main',
-            'calibrar_camara_techo = control_bebop.calibrar_camara_techo:main',
             'plot_3d = control_bebop.plot_3d:main',
+            'sim_odometry = control_bebop.sim_odometry:main',
+            'calibrar_camara = control_bebop.calibrar_camara:main',
         ],
     },
 )

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Genera PNG imprimibles de los ArUco de config/aruco_map.yaml (y del marcador del dron).
+Genera PNG imprimibles de los ArUco de config/aruco_map.yaml.
 
     python3 scripts/generar_marcadores.py [--mapa config/aruco_map.yaml] [--salida marcadores] [--dpi 300]
 
@@ -41,8 +41,6 @@ def main():
         data = yaml.safe_load(f)
     dictionary = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, data['dictionary']))
     markers = [(m['id'], m['size']) for m in data['markers']]
-    if data.get('drone_marker'):
-        markers.append((data['drone_marker']['id'], data['drone_marker']['size']))
     os.makedirs(args.salida, exist_ok=True)
     for marker_id, size in markers:
         path = os.path.join(args.salida, f'aruco_{marker_id:02d}.png')

@@ -3,8 +3,8 @@ import math as mt
 import casadi as ca 
 
 
-
-Kt=0.0 #constante d torque
+Kv= 980 #KV  constante de velocidad del motor
+Kt=1/Kv #constante d torque
 tf=0.0 #torque de friccion
 R=0.0 #resistencia del embobinado 
 Ke=0.0 #constante de voltaje del motor 

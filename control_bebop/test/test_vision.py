@@ -6,8 +6,7 @@ import cv2
 import numpy as np
 import pytest
 
-from control_bebop.vision import (OdomHistory, OffsetFilter, camera_in_world,
-                                  ceiling_drone_pose, drone_marker_corners_local,
+from control_bebop.vision import (OdomHistory, OffsetFilter, VisionFusion, camera_in_world,
                                   load_marker_map, marker_corners,
                                   onboard_drone_pose, solve_pnp)
 
@@ -51,17 +50,27 @@ def test_wall_marker_faces_viewer():
 
 
 def test_map_file_loads_with_unique_ids():
-    name, corners, drone = load_marker_map(MAP)
+    name, corners = load_marker_map(MAP)
     assert name.startswith('DICT_')
     assert len([i for i in corners if i < 30]) == 8   # uno por tabla
-    assert drone['id'] not in corners
+
+
+@pytest.mark.parametrize('name', ['aruco_map.yaml', 'aruco_map_sim.yaml'])
+def test_wall_markers_face_inside(name):
+    # Cara hacia afuera = esquinas en espejo: el PnP falla o da la pose reflejada
+    _, corners = load_marker_map(os.path.join(os.path.dirname(MAP), name))
+    for i, c in corners.items():
+        if i < 30:
+            # derecha × abajo apunta hacia la valla, lejos de quien lo mira
+            into_wall = np.cross(c[1] - c[0], c[3] - c[0])
+            assert into_wall @ c.mean(axis=0) > 0, f'id {i} mira hacia afuera'
 
 
 # ── A bordo ───────────────────────────────────────────────────
 @pytest.mark.parametrize('pos,yaw', [((0.5, 0.3, 1.2), 0.5), ((-0.4, 0.8, 1.5), 2.5),
                                      ((1.0, -0.5, 1.2), -1.8)])
 def test_onboard_pose_from_wall_markers(pos, yaw):
-    _, corners, _ = load_marker_map(MAP)
+    _, corners = load_marker_map(MAP)
     tilt = math.radians(-28)
     rvec, tvec = camera_rt(pos, yaw, tilt)
     seen = [c for c in corners.values() if visible(c, rvec, tvec)]
@@ -79,28 +88,6 @@ def test_onboard_offset_moves_to_drone_center():
     R_wc = np.column_stack([[0, -1, 0], [0, 0, -1], [1, 0, 0]]).astype(float)
     x, y, _, yaw = onboard_drone_pose(R_wc, np.array([1.1, 0.0, 1.0]), cam_offset_x=0.1)
     assert (x, y, yaw) == pytest.approx((1.0, 0.0, 0.0), abs=1e-9)
-
-
-# ── Techo ─────────────────────────────────────────────────────
-def test_ceiling_pose_of_drone_marker():
-    cam_pos = (0.2, -0.1, 2.74)
-    # Cámara mirando hacia abajo
-    f, r = np.array([0, 0, -1.0]), np.array([0, -1.0, 0])
-    R_wc = np.column_stack([r, np.cross(f, r), f])
-    K_c = np.array([[930.0, 0, 640], [0, 930.0, 360], [0, 0, 1]])
-    drone = (0.6, 0.3, 1.3, math.radians(40))
-    local = drone_marker_corners_local(0.10)
-    c, s = math.cos(drone[3]), math.sin(drone[3])
-    # Borde superior del marcador (+y local) hacia el frente del dron
-    R_wm = np.array([[s, c, 0], [-c, s, 0], [0, 0, 1.0]])
-    world = (R_wm @ local.T).T + drone[:3]
-    rvec, _ = cv2.Rodrigues(R_wc.T)
-    tvec = -R_wc.T @ np.array(cam_pos)
-    img = project(world, rvec, tvec, k=K_c, noise=0.3)
-    (x, y, z, yaw), err, dist = ceiling_drone_pose(img, 0.10, K_c, D, R_wc, np.array(cam_pos))
-    assert (x, y, z) == pytest.approx(drone[:3], abs=0.03)
-    assert math.degrees(abs(yaw - drone[3])) < 2.0
-    assert dist == pytest.approx(1.55, abs=0.05)
 
 
 # ── Fusión ────────────────────────────────────────────────────
@@ -129,14 +116,13 @@ def test_offset_filter_corrects_drift():
     assert f.offset[2] == pytest.approx(true_offset[2], abs=0.01)
 
 
-def test_offset_filter_rejects_outlier_then_relocalizes():
-    f = OffsetFilter(max_rejects=3)
+def test_offset_filter_rejects_outliers_without_jumping():
+    # Una racha de mediciones malas (PnP espejo) no mueve la pose
+    f = OffsetFilter()
     assert f.update((1.0, 0.0, 0.0), (1.0, 0.0, 0.0), 0.03, 0.03) == 'init'
-    assert f.update((2.0, 0.0, 0.0), (1.0, 0.0, 0.0), 0.03, 0.03) == 'rejected'
-    assert f.offset[0] == pytest.approx(0.0)
-    assert f.update((2.0, 0.0, 0.0), (1.0, 0.0, 0.0), 0.03, 0.03) == 'rejected'
-    assert f.update((2.0, 0.0, 0.0), (1.0, 0.0, 0.0), 0.03, 0.03) == 'reinit'
-    assert f.apply(1.0, 0.0, 0.0)[0] == pytest.approx(2.0)
+    for _ in range(20):
+        assert f.update((3.0, 0.0, 0.8), (1.0, 0.0, 0.0), 0.10, 0.03) == 'rejected'
+    assert f.apply(1.0, 0.0, 0.0) == pytest.approx((1.0, 0.0, 0.0))
 
 
 def test_offset_filter_weights_by_sigma():
@@ -144,9 +130,58 @@ def test_offset_filter_weights_by_sigma():
     a, b = OffsetFilter(), OffsetFilter()
     for f in (a, b):
         f.update((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 0.05, 0.05)
-    a.update((0.2, 0.0, 0.0), (0.0, 0.0, 0.0), 0.02, 0.05)
-    b.update((0.2, 0.0, 0.0), (0.0, 0.0, 0.0), 0.20, 0.05)
+    a.update((0.1, 0.0, 0.0), (0.0, 0.0, 0.0), 0.02, 0.05)
+    b.update((0.1, 0.0, 0.0), (0.0, 0.0, 0.0), 0.20, 0.05)
     assert a.offset[0] > b.offset[0] > 0.0
+
+
+def test_offset_filter_gate_opens_without_markers():
+    # 0.4 m de error: recién corregido se rechaza; tras 60 s sin marcadores se acepta
+    f = OffsetFilter()
+    f.reset(0.05, 0.05)
+    f.predict(0.0)
+    assert f.update((0.4, 0.0, 0.0), (0.0, 0.0, 0.0), 0.03, 0.03) == 'rejected'
+    f.predict(60.0)
+    assert f.update((0.4, 0.0, 0.0), (0.0, 0.0, 0.0), 0.03, 0.03) == 'ok'
+    assert f.offset[0] > 0.35
+
+
+def test_offset_filter_applies_correction_gradually():
+    f = OffsetFilter(rate_xy=0.1)
+    f.reset(0.05, 0.05)
+    f.predict(0.0)
+    f.predict(60.0)
+    f.update((0.4, 0.0, 0.0), (0.0, 0.0, 0.0), 0.03, 0.03)
+    assert f.apply(0.0, 0.0, 0.0)[0] == pytest.approx(0.0)   # sin escalón
+    f.predict(61.0)
+    assert f.apply(0.0, 0.0, 0.0)[0] == pytest.approx(0.1)
+    f.predict(70.0)
+    assert f.apply(0.0, 0.0, 0.0)[0] == pytest.approx(f.offset[0])
+
+
+def test_fusion_starts_at_takeoff_and_loses_lock_without_markers():
+    v = VisionFusion(max_sigma=0.20, init_sigma_xy=0.05, q_xy=0.0025)
+    assert v.odom(0.0, 0.3, 0.0, 0.0) is None and not v.locked
+    v.takeoff(reanchor=False)
+    assert v.odom(0.1, 0.3, 0.0, 0.0) == pytest.approx((0.3, 0.0, 0.0))
+    assert v.locked
+    v.odom(14.0, 0.3, 0.0, 0.0)    # sqrt(0.0025 + 0.0025·14) ≈ 0.19 m
+    assert v.locked
+    v.odom(16.0, 0.3, 0.0, 0.0)
+    assert not v.locked
+    assert v.vision(16.0, (0.3, 0.0, 0.0), 0.03, 0.03) == 'ok'
+    assert v.locked
+    assert v.vision(30.0, (0.3, 0.0, 0.0), 0.03, 0.03) == 'sin_odom'
+
+
+def test_fusion_takeoff_keeps_visual_offset_unless_reanchored():
+    v = VisionFusion()
+    v.odom(0.0, 0.0, 0.0, 0.0)
+    assert v.vision(0.0, (0.2, 0.0, 0.0), 0.03, 0.03) == 'init'
+    v.takeoff(reanchor=False)
+    assert v.filter.offset[0] == pytest.approx(0.2)
+    v.takeoff(reanchor=True)
+    assert v.filter.offset[0] == pytest.approx(0.0)
 
 
 def test_detector_finds_generated_marker():
@@ -170,3 +205,24 @@ def test_single_marker_ambiguity_resolved_by_level_camera():
         x, y, z, est_yaw = onboard_drone_pose(R_wc, cam)
         assert (x, y, z) == pytest.approx(pos, abs=0.10)
         assert math.degrees(abs(est_yaw - yaw)) < 3.0
+
+
+def test_single_floor_marker_off_origin_plane():
+    # Piso de la simulación (z 0.003): el IPPE de OpenCV fallaba si el plano no
+    # pasa por el origen (≈50 px de error) y los ArUco del piso se descartaban
+    c = marker_corners([0.5, 0.5, 0.003], 0.17, floor_yaw=0.0)
+    pos, yaw = (1.4, 0.25, 1.0), math.radians(-172)
+    rvec, tvec = camera_rt(pos, yaw, math.radians(-28))
+    sol = solve_pnp(c, project(c, rvec, tvec, noise=0.3), K, D, level_camera=True)
+    assert sol is not None and sol[2] < 2.0
+    x, y, z, _ = onboard_drone_pose(*camera_in_world(sol[0], sol[1]))
+    assert (x, y, z) == pytest.approx(pos, abs=0.05)
+
+
+def test_fusion_rejects_measurement_with_wrong_height():
+    # Un PnP espejo suele dar también una z imposible: la altura sí se conoce
+    v = VisionFusion(max_dz=0.3)
+    v.takeoff(reanchor=False)
+    v.odom(0.0, 0.5, 0.0, 0.0)
+    assert v.vision(0.0, (0.5, 0.0, 0.0), 0.03, 0.03, z_err=0.45) == 'rejected_z'
+    assert v.vision(0.0, (0.5, 0.0, 0.0), 0.03, 0.03, z_err=0.10) == 'ok'

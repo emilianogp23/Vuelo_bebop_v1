@@ -39,7 +39,7 @@ HELP_TEXT = """
 ║  m  → Manual mode (control manual)               ║
 ║  l  → Land (aterrizar)                           ║
 ║  r  → Return Home (regresar a home)              ║
-║  e  → Emergency Stop (parada de emergencia)      ║
+║  e  → Aterrizaje inmediato (como △)              ║
 ║  x  → Reset (salir de Emergency → IDLE)          ║
 ║  h  → Help (mostrar este menú)                   ║
 ║  q  → Quit (salir)                               ║
@@ -120,7 +120,7 @@ def input_thread(panel, stop_event):
             print('🏠 RETURN HOME')
             panel.send_command(CMD_RETURN_HOME)
         elif key == 'e':
-            print('🔴 EMERGENCY STOP!')
+            print('🔴 ATERRIZAJE INMEDIATO')
             panel.send_command(CMD_EMERGENCY)
         elif key == 'x':
             print('🔄 RESET')

@@ -1,60 +1,73 @@
 # Parámetros de SIMULACIÓN, compartidos por los dos launches:
 #   sim_flight_humble.launch.py  → laptop     (ROS 2 Humble + Gazebo Fortress)
 #   main_flight.launch.py        → escritorio (ROS 2 Jazzy  + Gazebo Harmonic)
-# Cambia aquí y ambas máquinas quedan iguales. Para el dron real se usa
-# real_drone.yaml: en Gazebo el comando es velocidad (m/s) y en el Bebop real
-# es inclinación, así que las ganancias NO son intercambiables.
+#
+# Los launches cargan primero real_drone.yaml y luego este archivo: la órbita,
+# la máquina de estados, los tiempos, la visión y el mando son los del vuelo
+# real. Aquí solo va lo que cambia de verdad en Gazebo: el comando es velocidad
+# (m/s) y no inclinación, así que las ganancias NO son intercambiables; la
+# altura es exacta; la cámara es fija; el corral simulado mide 4 x 4 m.
+
+/**:
+  ros__parameters:
+    use_real_drone: false
 
 flight_manager:
   ros__parameters:
-    use_real_drone: false
-    takeoff_height: 1.0
+    # Paredes del corral simulado en ±2 m (en el laboratorio están a ~2.45 m)
     arena_half_size: 1.8
     safety_margin: 0.15
-    auto_land_after_orbit: true
-    auto_land_on_home: true
-    deadman_timeout: 0.5
-    landing_rate: 0.3
-    position_tolerance: 0.15
-    touchdown_z: 0.08
-    frequency: 20.0
-    home_x: 0.0
-    home_y: 0.0
 
 control_PID:
   ros__parameters:
-    use_real_drone: false
-    cmd_vel_topic: /bebop1/cmd_vel
-    takeoff_height: 1.0
+    cmd_vel_topic: /bridge/cmd_vel_raw   # sim_odometry aplica la geocerca
     arena_limit: 1.8
+    # Gazebo: el comando ya es velocidad con controlador interno
+    kp_xy: 0.70
+    kd_xy: 0.15
+    ki_xy: 0.03
+    int_limit_xy: 0.5
     max_vel_xy: 0.5
     max_vel_z: 1.0
     max_vel_yaw: 0.5
     z_mode: pid           # en Gazebo la altura es exacta
-
-trajectory_planner:
-  ros__parameters:
-    # Mismo montaje que el vuelo real: objeto 1 m al frente del despegue.
-    # El cilindro y el bote del mundo bebop1.sdf están en (1.0, 0.0).
-    target_x: 1.0
-    target_y: 0.0
-    circle_radius: 0.50
-    circle_height: 1.0
-    hold_entry_altitude: false
-    circle_speed: 0.15
-    max_yaw_rate: 0.15
-    yaw_mode: lookat      # la cámara mira siempre al objeto
-    lookat_center: true
-    lookat_z: 1.025       # altura del bote de pastillas
-    arena_half_size: 1.8
-    safety_margin: 0.15
-
-gui_odometria:
-  ros__parameters:
-    frequency: 20.0
+    native_z_guard: false
+    # Feedforward 1:1. Los del real (0.20 y 4.5) suponen que 1.0 de yaw ≈ 0.21 rad/s;
+    # con 4.5 el dron simulado giraba ~22° adelante del objeto y lo perdía.
+    ff_gain_xy: 1.0
+    ff_gain_yaw: 1.0
 
 nodo_video:
   ros__parameters:
     camera_fps: 15.0      # update_rate de la cámara del modelo parrot_bebop_2
     image_topic: /world/bebop/model/bebop1/link/body/sensor/rgb_camera_sensor/image
     output_dir: ''        # vacío = control_bebop/videos
+
+# sim_odometry convierte la pose exacta de Gazebo (/bebop1/pose_gt) en una
+# odometría que deriva como la del Bebop y la corrige con los ArUco
+# (aruco_localizer). use_vision, vision_shadow y vision_* vienen de
+# real_drone.yaml; el launch acepta vision_shadow:=true|false para probar otro modo.
+sim_odometry:
+  ros__parameters:
+    odom_scale: 1.15       # el Bebop real lee ~1.24× la distancia
+    odom_bias_vx: 0.010    # m/s, solo en el aire
+    odom_bias_vy: -0.008
+    odom_yaw_drift_deg_s: 0.05
+
+aruco_localizer:
+  ros__parameters:
+    map_file: aruco_map_sim.yaml   # marcadores del mundo bebop1.sdf
+    image_topic: /world/bebop/model/bebop1/link/body/sensor/rgb_camera_sensor/image
+    camera_info_topic: /world/bebop/model/bebop1/link/body/sensor/rgb_camera_sensor/camera_info
+    camera_tilt_deg: .nan  # cámara fija del modelo, inclinada −28° como la real
+    cam_offset_x: 0.113    # pose del sensor en el modelo parrot_bebop_2
+    min_markers: 1         # el mapa de Gazebo es exacto: un marcador basta
+    stamp_with_receive_time: true
+
+plot_3d:
+  ros__parameters:
+    map_file: aruco_map_sim.yaml
+    arena_x_max: 1.95
+    circle_height: 1.0
+    object_height: 0.95
+    object_size: 0.56

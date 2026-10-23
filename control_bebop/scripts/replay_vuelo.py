@@ -11,10 +11,11 @@ Uso:
 import os
 import sys
 
-# Compatibilidad con venvs para rosbags
+# rosbags puede estar en ~/rob_env o ~/env_dron (de la versión de Python actual)
+_ver = f'python{sys.version_info.major}.{sys.version_info.minor}'
 for venv in [
-    os.path.expanduser('~/rob_env/lib/python3.12/site-packages'),
-    os.path.expanduser('~/env_dron/lib/python3.12/site-packages'),
+    os.path.expanduser(f'~/rob_env/lib/{_ver}/site-packages'),
+    os.path.expanduser(f'~/env_dron/lib/{_ver}/site-packages'),
 ]:
     if os.path.exists(venv) and venv not in sys.path:
         sys.path.insert(0, venv)

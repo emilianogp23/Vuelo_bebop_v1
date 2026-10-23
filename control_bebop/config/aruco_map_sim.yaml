@@ -1,0 +1,23 @@
+# Mapa de marcadores ArUco del corral de SIMULACIÓN (bebop1.sdf).
+#
+# Mismos ids en las mismas vallas que aruco_map.yaml (0-1 enfrente, 2-3 a la
+# derecha, 4-5 atrás, 6-7 a la izquierda), pero sobre la cara interior de
+# las paredes de Gazebo (0.10 m de grosor, centradas en ±2 m → cara en ±1.95).
+# Los marcadores del mundo se generan desde este archivo:
+#     python3 scripts/generar_aruco_gazebo.py
+dictionary: DICT_4X4_50
+
+markers:
+  - {id: 0, size: 0.17, center: [1.947, 1.00, 0.30], normal_yaw_deg: 180}
+  - {id: 1, size: 0.17, center: [1.947, -1.00, 0.30], normal_yaw_deg: 180}
+  - {id: 2, size: 0.17, center: [1.00, -1.947, 0.30], normal_yaw_deg: 90}
+  - {id: 3, size: 0.17, center: [-1.00, -1.947, 0.30], normal_yaw_deg: 90}
+  - {id: 4, size: 0.17, center: [-1.947, -1.00, 0.30], normal_yaw_deg: 0}
+  - {id: 5, size: 0.17, center: [-1.947, 1.00, 0.30], normal_yaw_deg: 0}
+  - {id: 6, size: 0.17, center: [-1.00, 1.947, 0.30], normal_yaw_deg: -90}
+  - {id: 7, size: 0.17, center: [1.00, 1.947, 0.30], normal_yaw_deg: -90}
+  # Piso, alrededor de la caja en (1, 0); sobre el tapete (z 0.002)
+  - {id: 30, size: 0.17, center: [1.50, 0.50, 0.003], floor_yaw_deg: 0}
+  - {id: 31, size: 0.17, center: [1.50, -0.50, 0.003], floor_yaw_deg: 0}
+  - {id: 32, size: 0.17, center: [0.50, -0.50, 0.003], floor_yaw_deg: 0}
+  - {id: 33, size: 0.17, center: [0.50, 0.50, 0.003], floor_yaw_deg: 0}

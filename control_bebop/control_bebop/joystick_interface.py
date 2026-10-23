@@ -13,14 +13,15 @@ Mapeo PS5 DualSense (defaults, configurables via parámetros):
     L2 (axis 2)  = Deadman Switch (gatillo izquierdo)
     Stick Izq Y (axis 1)  = Pitch (avance/retroceso)
     Stick Izq X (axis 0)  = Roll (lateral)
-    Stick Der Y (axis 4)  = Throttle (subir/bajar)
-    Stick Der X (axis 3)  = Yaw (rotación)
+    Cruceta vertical (axis 7)   = Subir/bajar
+    Cruceta horizontal (axis 6) = Yaw (rotación)
     × Cruz    (btn 0) = Takeoff
     ○ Círculo (btn 1) = Land
-    △ Triáng. (btn 2) = Emergency Stop
+    △ Triáng. (btn 2) = Aterrizaje inmediato (L1+R1+△ = corte de motores)
     □ Cuadrado(btn 3) = Toggle Auto/Manual
     L1        (btn 4) = Return Home
     R1        (btn 5) = Iniciar trayectoria automática
+    Share     (btn 8) = FlatTrim (solo en tierra)
     Options   (btn 9) = Reset desde Emergency
 """
 
@@ -65,8 +66,8 @@ class JoystickInterface(Node):
         self.declare_parameter('deadman_threshold', 0.0)
         self.declare_parameter('axis_pitch', 1)          # Stick izq Y
         self.declare_parameter('axis_roll', 0)           # Stick izq X
-        self.declare_parameter('axis_throttle', 7)#4       # Stick der Y
-        self.declare_parameter('axis_yaw', 6)            # Stick der X 3
+        self.declare_parameter('axis_throttle', 7)       # Cruceta vertical (stick der.: 4)
+        self.declare_parameter('axis_yaw', 6)            # Cruceta horizontal (stick der.: 3)
 
         # ── Parámetros de velocidad ───────────────────────────
         self.declare_parameter('max_linear_speed', 0.5)

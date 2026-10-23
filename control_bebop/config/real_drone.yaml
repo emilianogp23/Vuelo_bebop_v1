@@ -3,11 +3,24 @@
     use_real_drone: true
 
     # ── Geocerca / bridge ─────────────────────────────────────
+    # Actúa en el aire (de takeoff a land) en TODOS los estados, manual incluido,
+    # también sobre los ceros del hover, en el vuelo real (real_drone_bridge), en
+    # simulación (sim_odometry) y en el modo muestra. Cuadrado ±arena_x_max
+    # alrededor del origen. Hacia afuera solo deja ir a (distancia a 1.7 m) /
+    # geofence_lookahead m/s y frena si va más rápido; pasando 1.7 m empuja hacia
+    # dentro. Elegido con los modelos identificados de los bags de octubre: con el
+    # piloto empujando hacia la valla, el peor caso se detiene en ~2.02 m (valla a
+    # ~2.45). La órbita de r 0.5 en (1, 0) pasa sin frenarse. Sin validar en vuelo.
+    geofence_enabled: true
+    arena_x_max: 2.0          # ≤ distancia del origen a la valla más cercana
     max_z: 2.0
-    arena_x_min: -2.0
-    arena_x_max: 2.0
-    arena_y_min: -2.0
-    arena_y_max: 2.0
+    geofence_lookahead: 2.5   # s
+    geofence_brake_gain: 2.0  # comando por m/s de exceso sobre la velocidad permitida
+    geofence_push_gain: 0.5   # empuje extra por m pasado del límite duro
+    geofence_max_push: 0.4
+    # Modo sombra: la geocerca usa la pose corregida por los ArUco si hay lock
+    # (la odometría sola no ve la deriva). Con la visión al mando, siempre.
+    geofence_use_vision: true
     max_cmd_xy: 0.40
     max_cmd_z: 0.60
     # El Bebop gira ~0.21 rad/s por unidad de comando: con 0.60 el máximo era
@@ -27,21 +40,33 @@
     safe_zone_radius: 0.5
     min_z_outside_safe: 1.0
 
-    # ── Corrección visual (ArUco en vallas + C920 del techo) ──
-    # Ver PLAN_LOCALIZACION_ARUCO.md. Marco "corral": origen en la zona segura,
+    # ── Corrección visual (odometría + ArUco vistos por el Bebop) ──
+    # Ver GUIA_PRUEBAS_Y_LOCALIZACION.md. Marco "corral": origen en la zona segura,
     # x hacia la valla de enfrente al despegar (config/aruco_map.yaml).
-    # use_vision: fusiona /vision/onboard/pose y /vision/ceiling/pose con la odometría.
+    # La posición la da la odometría; cada vez que la cámara del Bebop ve
+    # marcadores (/vision/onboard/pose) se corrige su error acumulado.
     # vision_shadow: true = solo publica /vision/fused_pose para comparar; el
-    #   control sigue con la odometría. false = el control usa la pose corregida,
-    #   R1 exige lock visual y sin visión > vision_loss_hover_time → HOVER.
+    #   control sigue con la odometría. false = el control usa la pose corregida.
+    # Lock = incertidumbre de la posición < vision_max_sigma. Crece √(q_xy·t)
+    # sin marcadores: de 0.05 a 0.20 m en ~15 s. Sin lock R1 no inicia la
+    # órbita y tras vision_loss_hover_time → HOVER (solo con visión al mando).
     use_vision: true
     vision_shadow: true
     vision_q_xy: 0.0025
     vision_q_yaw: 0.0001
-    vision_gate_xy: 0.5
-    vision_gate_yaw_deg: 15.0
-    vision_lock_timeout: 0.5
+    vision_gate_sigma: 3.0         # rechaza mediciones a más de 3σ de lo esperado
+    vision_max_sigma: 0.20
+    vision_init_sigma_xy: 0.05     # el dron se coloca en el origen mirando a +x
+    vision_init_sigma_yaw_deg: 3.0
+    vision_offset_rate_xy: 0.10    # m/s: la corrección entra suave, sin escalón
+    vision_offset_rate_yaw_deg: 5.0
     vision_loss_hover_time: 2.0
+    # aruco_localizer. Validación en mano del 23 oct (puntos de control, guía
+    # §6.5): con dos marcadores error 1–10 cm, con uno solo 30–50 cm y 8–14° a
+    # cualquier distancia probada. Con 2 px se descartaban las poses de dos
+    # marcadores (error de reproyección 2.6–2.9 px por la medición del mapa).
+    min_markers: 2
+    max_reproj_px: 4.0
     # Tilt de la cámara del Bebop para ver los ArUco de las vallas (también
     # afecta el video del escaneo). NaN = aruco_localizer no mueve la cámara.
     camera_tilt_deg: -28.0
@@ -101,11 +126,12 @@
     target_y: 0.0
     circle_radius: 0.50    # Radio del círculo (m)
     circle_speed: 0.10     # vuelta en ~63 s; deja ~50 % de margen de yaw
-    yaw_mode: fixed #lookat       # orientar el frente del dron hacia el centro
+    yaw_mode: lookat       # orientar el frente del dron hacia el centro
     lookat_center: true    # enfoca automáticamente (target_x, target_y)
     lookat_x: 1.0
     lookat_y: 0.0
     hold_entry_altitude: true # mantiene la altura en la que despegó sin saltos
+    min_entry_altitude: 1.05  # sobre min_z_outside_safe: la órbita sale de la zona segura
     approach_speed: 0.15   # m/s al ir al punto de entrada
     settle_time: 1.5       # s quieto en el punto de entrada antes de orbitar
     omega_ramp_time: 3.0   # s para acelerar ω de 0 al valor final

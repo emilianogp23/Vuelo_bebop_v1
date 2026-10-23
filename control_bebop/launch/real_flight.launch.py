@@ -8,8 +8,7 @@ Cadena de comandos:
     real_drone_bridge → /bebop/takeoff, /bebop/land, /bebop/reset, /bebop/flattrim, /bebop/cmd_vel
     real_drone_bridge ← /bebop/odom   → /bebop1/pose (marco de despegue), /odom_local
     real_drone_bridge ← /bebop/altitude → z de /bebop1/pose (requiere el parche del driver)
-    aruco_localizer (cámara del Bebop) → /vision/onboard/pose ─┐
-    ceiling_tracker (C920 del techo)   → /vision/ceiling/pose ─┴→ real_drone_bridge (use_vision)
+    aruco_localizer (cámara del Bebop) → /vision/onboard/pose → real_drone_bridge (use_vision)
 
 Uso:
     # Driver corriendo en otra terminal (recomendado):
@@ -25,8 +24,8 @@ Uso:
     # Escanear un objeto en el piso (Pioneer 3DX): cámara hacia abajo en la órbita
     ros2 launch control_bebop real_flight.launch.py obj_suelo:=true
 
-    # Sin la cámara del techo o sin localización visual:
-    ros2 launch control_bebop real_flight.launch.py launch_ceiling:=false launch_vision:=false
+    # Sin localización visual (solo odometría):
+    ros2 launch control_bebop real_flight.launch.py launch_vision:=false
 """
 
 import os
@@ -56,6 +55,15 @@ def _build_nodes(context):
     # Pioneer 3DX: ~0.45 x 0.38 m, 0.24 m de alto (solo para dibujarlo)
     objeto = ({'object_height': 0.24, 'object_size': 0.45} if obj_suelo else {})
 
+    driver_params = {
+        'bebop_ip': LaunchConfiguration('ip').perform(context),
+        'max_altitude': float(LaunchConfiguration('max_altitude').perform(context)),
+    }
+    # Calibración propia de la cámara (la escribe calibrar_camara)
+    cam_calib = config_file('bebop2_camera_calib.yaml')
+    if cam_calib:
+        driver_params['camera_calibration_file'] = f'file://{cam_calib}'
+
     params = [base_cfg]
     if use_calib and calib_src:
         params.append(calib_src)
@@ -79,10 +87,7 @@ def _build_nodes(context):
             name='bebop_driver',
             namespace='bebop',
             output='screen',
-            parameters=[{
-                'bebop_ip': LaunchConfiguration('ip').perform(context),
-                'max_altitude': float(LaunchConfiguration('max_altitude').perform(context)),
-            }],
+            parameters=[driver_params],
             condition=IfCondition(LaunchConfiguration('launch_driver')),
         ),
         Node(
@@ -135,7 +140,7 @@ def _build_nodes(context):
         Node(
             package='control_bebop',
             executable='trajectory_planner',
-            name='trajectory_controller',
+            name='trajectory_planner',
             parameters=params,
             output='screen',
         ),
@@ -156,13 +161,6 @@ def _build_nodes(context):
         ),
         Node(
             package='control_bebop',
-            executable='ceiling_tracker',
-            name='ceiling_tracker',
-            output='screen',
-            condition=IfCondition(LaunchConfiguration('launch_ceiling')),
-        ),
-        Node(
-            package='control_bebop',
             executable='plot_3d',
             name='plot_3d',
             parameters=params + [objeto],
@@ -179,10 +177,10 @@ def _build_nodes(context):
         ExecuteProcess(
             cmd=['ros2', 'bag', 'record', '-s', 'sqlite3', '-o', bag_path,
                  '/bebop/odom', '/bebop/cmd_vel', '/bridge/cmd_vel_raw',
-                 '/bebop1/pose', '/odom_local', '/joy', '/joy_cmd',
+                 '/bebop1/pose', '/odom_local', '/joy', '/joy_cmd', '/joy_commands', '/deadman_active',
                  '/flight_state', '/goal', '/goal_vel',
                  '/bebop/altitude', '/trajectory_stalled',
-                 '/vision/onboard/pose', '/vision/ceiling/pose', '/vision/fused_pose',
+                 '/vision/onboard/pose', '/vision/fused_pose', '/vision/odom_pose',
                  '/vision/lock', '/vision/reset'],
             output='log',
         ),
@@ -205,8 +203,6 @@ def generate_launch_description():
                               description='Vista 3D en tiempo real (plot_3d)'),
         DeclareLaunchArgument('launch_vision', default_value='true',
                               description='Localizador ArUco con la cámara del Bebop (mueve el tilt)'),
-        DeclareLaunchArgument('launch_ceiling', default_value='true',
-                              description='Localizador con la cámara C920 del techo'),
         DeclareLaunchArgument('use_calibration', default_value='false',
                               description='Cargar config/real_drone_calibrated.yaml'),
         OpaqueFunction(function=_build_nodes),

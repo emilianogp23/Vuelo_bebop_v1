@@ -5,13 +5,11 @@ Marco "corral": origen en el centro de la zona segura de despegue, en el piso;
 x hacia donde apunta el dron al despegar, y a la izquierda, z arriba. Si el
 dron despega en el origen mirando a +x, coincide con el marco de despegue.
 
-Dos fuentes de medición:
-    - A bordo: la cámara del Bebop ve marcadores en las vallas (mapa conocido)
-      → pose de la cámara → pose del dron.
-    - Techo: una cámara fija (C920) ve un marcador pegado sobre el dron.
-
-Ambas se fusionan con la odometría en ``OffsetFilter``: un Kalman de 3
-estados que estima el error acumulado (dx, dy, dyaw) de la odometría.
+La cámara del Bebop ve marcadores en las vallas y el piso (mapa conocido)
+→ pose de la cámara → pose del dron. La posición la da la odometría; cada
+detección la corrige en ``OffsetFilter``: un Kalman de 3 estados que estima el
+error acumulado (dx, dy, dyaw) de la odometría. Entre detecciones (puede pasar
+un buen rato sin ver marcadores) solo crece su incertidumbre.
 """
 
 import math
@@ -51,7 +49,7 @@ def load_marker_map(path):
     """Lee ``aruco_map.yaml``.
 
     Returns:
-        (dictionary_name, {id: esquinas (4, 3)}, drone_marker dict o None)
+        (dictionary_name, {id: esquinas (4, 3)})
     """
     with open(path) as f:
         data = yaml.safe_load(f)
@@ -63,7 +61,7 @@ def load_marker_map(path):
             m['center'], float(m['size']),
             None if nyaw is None else math.radians(nyaw),
             None if fyaw is None else math.radians(fyaw))
-    return data.get('dictionary', 'DICT_4X4_50'), corners, data.get('drone_marker')
+    return data.get('dictionary', 'DICT_4X4_50'), corners
 
 
 def make_detector(dictionary_name):
@@ -113,6 +111,10 @@ def solve_pnp(obj_pts, img_pts, K, D, ambiguity_ratio=2.0, level_camera=False):
     D = np.asarray(D, dtype=np.float64)
     if len(obj) < 4:
         return None
+    # El IPPE de OpenCV falla si el plano no pasa por el origen (piso a z 0.003):
+    # se resuelve con los puntos centrados y se deshace al final
+    center = obj.mean(axis=0)
+    obj = obj - center
     if len(obj) == 4:
         n, rvecs, tvecs, errs = cv2.solvePnPGeneric(
             obj, img, K, D, flags=cv2.SOLVEPNP_IPPE)
@@ -137,7 +139,8 @@ def solve_pnp(obj_pts, img_pts, K, D, ambiguity_ratio=2.0, level_camera=False):
         rvec, tvec = cv2.solvePnPRefineLM(obj, img, K, D, rvec, tvec)
     proj, _ = cv2.projectPoints(obj, rvec, tvec, K, D)
     err = float(np.sqrt(np.mean(np.sum((proj.reshape(-1, 2) - img) ** 2, axis=1))))
-    return rvec.reshape(3), tvec.reshape(3), err
+    R_cw, _ = cv2.Rodrigues(rvec)
+    return rvec.reshape(3), tvec.reshape(3) - R_cw @ center, err
 
 
 def camera_in_world(rvec, tvec):
@@ -159,35 +162,6 @@ def onboard_drone_pose(R_wc, cam_pos, cam_offset_x=0.0):
     yaw = math.atan2(rx, -ry)
     ox, oy = rotate2d(cam_offset_x, 0.0, yaw)
     return cam_pos[0] - ox, cam_pos[1] - oy, cam_pos[2], yaw
-
-
-def drone_marker_corners_local(size):
-    """Esquinas del marcador del dron en su propio marco (x derecha, y arriba)."""
-    h = size / 2.0
-    return np.array([[-h, h, 0.0], [h, h, 0.0], [h, -h, 0.0], [-h, -h, 0.0]])
-
-
-def ceiling_drone_pose(img_corners, size, K, D, R_wc, cam_pos, yaw_offset=0.0):
-    """Pose del dron vista desde la cámara del techo.
-
-    El marcador va pegado arriba del dron con su borde superior hacia el
-    frente. Returns ((x, y, z, yaw), error_px, distancia_m) o None.
-    """
-    n, rvecs, tvecs, errs = cv2.solvePnPGeneric(
-        drone_marker_corners_local(size), img_corners.reshape(4, 1, 2),
-        np.asarray(K, dtype=np.float64), np.asarray(D, dtype=np.float64),
-        flags=cv2.SOLVEPNP_IPPE_SQUARE)
-    if n == 0:
-        return None
-    i = int(np.argmin(np.asarray(errs).flatten()))
-    R_cm, _ = cv2.Rodrigues(rvecs[i])
-    t_cm = tvecs[i].reshape(3)
-    R_wm = R_wc @ R_cm
-    p = R_wc @ t_cm + cam_pos
-    # El ángulo del eje y del marcador en el plano casi no depende de la ambigüedad
-    yaw = normalize_angle(math.atan2(R_wm[1, 1], R_wm[0, 1]) + yaw_offset)
-    return (float(p[0]), float(p[1]), float(p[2]), yaw), float(np.asarray(errs).flatten()[i]), \
-        float(np.linalg.norm(t_cm))
 
 
 def measurement_sigma(distance, n_markers, sigma_xy0, sigma_yaw0, d0=1.5):
@@ -232,26 +206,38 @@ class OffsetFilter:
     """Kalman de 3 estados del error de la odometría: pose_corral = offset ∘ pose_odom.
 
     La incertidumbre crece con el tiempo (la odometría deriva) y cada medición
-    visual la reduce según su covarianza, así que las dos cámaras se combinan
-    solas. Mediciones con innovación grande se rechazan; tras ``max_rejects``
-    rechazos seguidos se reinicia con la última (re-localización).
+    visual la reduce según su covarianza. Mediciones a más de ``gate_sigma``
+    desviaciones de lo esperado se rechazan. No hay re-localización forzada:
+    mientras se rechaza, la incertidumbre sigue creciendo y el gate se abre
+    solo (un error real de 0.5 m entra en ~10 s; una racha de PnP espejo de un
+    marcador lejano, de 2-3 m, se queda fuera).
+
+    ``offset`` es la estimación; ``apply`` usa ``applied``, que la sigue a lo
+    más a ``rate_xy`` m/s y ``rate_yaw`` rad/s para que una corrección después
+    de un hueco no le meta un escalón al control. En init salta.
     """
 
-    def __init__(self, q_xy=0.0025, q_yaw=1e-4, gate_xy=0.5,
-                 gate_yaw=math.radians(15.0), max_rejects=5):
+    def __init__(self, q_xy=0.0025, q_yaw=1e-4, gate_sigma=3.0,
+                 rate_xy=0.10, rate_yaw=math.radians(5.0)):
         self.q_xy = q_xy
         self.q_yaw = q_yaw
-        self.gate_xy = gate_xy
-        self.gate_yaw = gate_yaw
-        self.max_rejects = max_rejects
+        self.gate_sigma = gate_sigma
+        self.rate_xy = rate_xy
+        self.rate_yaw = rate_yaw
         self.reset()
 
-    def reset(self):
+    def reset(self, sigma_xy=None, sigma_yaw=None):
+        """Sin sigmas: sin inicializar. Con sigmas: offset cero (corral = odometría)."""
         self.offset = [0.0, 0.0, 0.0]
-        self.P = [0.0, 0.0, 0.0]
-        self.initialized = False
-        self.rejects = 0
+        self.applied = [0.0, 0.0, 0.0]
+        self.initialized = sigma_xy is not None
+        self.P = ([sigma_xy ** 2, sigma_xy ** 2, sigma_yaw ** 2] if self.initialized
+                  else [0.0, 0.0, 0.0])
         self.last_t = None
+
+    @property
+    def sigma_xy(self):
+        return math.sqrt(max(self.P[0], self.P[1])) if self.initialized else math.inf
 
     def predict(self, t):
         if self.last_t is not None and t > self.last_t:
@@ -259,21 +245,32 @@ class OffsetFilter:
             self.P[0] += self.q_xy * dt
             self.P[1] += self.q_xy * dt
             self.P[2] += self.q_yaw * dt
+            for i, rate in ((0, self.rate_xy), (1, self.rate_xy), (2, self.rate_yaw)):
+                err = self.offset[i] - self.applied[i]
+                if i == 2:
+                    err = normalize_angle(err)
+                step = max(-rate * dt, min(rate * dt, err))
+                self.applied[i] += step
+            self.applied[2] = normalize_angle(self.applied[2])
         self.last_t = t if self.last_t is None else max(t, self.last_t)
 
-    def apply(self, x, y, yaw):
-        """Pose de odometría → pose en el corral."""
-        dx, dy, dyaw = self.offset
+    @staticmethod
+    def _compose(offset, x, y, yaw):
+        dx, dy, dyaw = offset
         rx, ry = rotate2d(x, y, dyaw)
         return rx + dx, ry + dy, normalize_angle(yaw + dyaw)
+
+    def apply(self, x, y, yaw):
+        """Pose de odometría → pose en el corral (con la corrección suavizada)."""
+        return self._compose(self.applied, x, y, yaw)
 
     def _init_from(self, meas, odom, sigma_xy, sigma_yaw):
         dyaw = normalize_angle(meas[2] - odom[2])
         rx, ry = rotate2d(odom[0], odom[1], dyaw)
         self.offset = [meas[0] - rx, meas[1] - ry, dyaw]
+        self.applied = list(self.offset)
         self.P = [sigma_xy ** 2, sigma_xy ** 2, sigma_yaw ** 2]
         self.initialized = True
-        self.rejects = 0
 
     def update(self, meas, odom, sigma_xy, sigma_yaw):
         """Incorpora una medición visual.
@@ -283,21 +280,18 @@ class OffsetFilter:
             odom: (x, y, yaw) de odometría en ese mismo instante.
 
         Returns:
-            'init', 'reinit', 'ok' o 'rejected'
+            'init', 'ok' o 'rejected'
         """
         if not self.initialized:
             self._init_from(meas, odom, sigma_xy, sigma_yaw)
             return 'init'
-        px, py, pyaw = self.apply(*odom)
+        px, py, pyaw = self._compose(self.offset, *odom)
         innov_yaw = normalize_angle(meas[2] - pyaw)
-        if math.hypot(meas[0] - px, meas[1] - py) > self.gate_xy or abs(innov_yaw) > self.gate_yaw:
-            self.rejects += 1
-            if self.rejects >= self.max_rejects:
-                # shortcut: no se comprueba que los rechazos sean coherentes entre sí
-                self._init_from(meas, odom, sigma_xy, sigma_yaw)
-                return 'reinit'
+        s_xy = (self.P[0] + sigma_xy ** 2, self.P[1] + sigma_xy ** 2)
+        d2_xy = (meas[0] - px) ** 2 / s_xy[0] + (meas[1] - py) ** 2 / s_xy[1]
+        d2_yaw = innov_yaw ** 2 / (self.P[2] + sigma_yaw ** 2)
+        if max(d2_xy, d2_yaw) > self.gate_sigma ** 2:
             return 'rejected'
-        self.rejects = 0
         k = self.P[2] / (self.P[2] + sigma_yaw ** 2)
         self.offset[2] = normalize_angle(self.offset[2] + k * innov_yaw)
         self.P[2] *= (1.0 - k)
@@ -307,3 +301,52 @@ class OffsetFilter:
             self.offset[i] += k * (m - r - self.offset[i])
             self.P[i] *= (1.0 - k)
         return 'ok'
+
+
+class VisionFusion:
+    """Odometría + poses ArUco. La usan real_drone_bridge y sim_odometry.
+
+    ``locked``: la posición es confiable (incertidumbre < ``max_sigma``). No
+    depende de ver marcadores ahora: entre detecciones manda la odometría.
+    """
+
+    def __init__(self, max_sigma=0.20, init_sigma_xy=0.05,
+                 init_sigma_yaw=math.radians(3.0), max_dz=0.30, **filter_kw):
+        self.max_sigma = max_sigma
+        self.max_dz = max_dz
+        self.init_sigma = (init_sigma_xy, init_sigma_yaw)
+        self.hist = OdomHistory()
+        self.filter = OffsetFilter(**filter_kw)
+
+    def takeoff(self, reanchor):
+        """Al despegar. ``reanchor``: el marco de la odometría se reinició aquí.
+
+        El dron despega en el origen del corral mirando a +x (aruco_map.yaml),
+        así que sin otra medición el offset arranca en cero.
+        """
+        if reanchor:
+            self.hist = OdomHistory()
+        if reanchor or not self.filter.initialized:
+            self.filter.reset(*self.init_sigma)
+
+    def odom(self, t, x, y, yaw):
+        """Pose corregida (x, y, yaw) o None si el filtro no está inicializado."""
+        self.hist.add(t, x, y, yaw)
+        self.filter.predict(t)
+        return self.filter.apply(x, y, yaw) if self.filter.initialized else None
+
+    def vision(self, t, meas, sigma_xy, sigma_yaw, z_err=None):
+        """'init', 'ok', 'rejected', 'rejected_z' o 'sin_odom'.
+
+        ``z_err``: z visual − altura medida; si pasa de ``max_dz`` el PnP está mal.
+        """
+        if z_err is not None and abs(z_err) > self.max_dz:
+            return 'rejected_z'
+        odom = self.hist.at(t)
+        if odom is None:
+            return 'sin_odom'
+        return self.filter.update(meas, odom, sigma_xy, sigma_yaw)
+
+    @property
+    def locked(self):
+        return self.filter.sigma_xy < self.max_sigma

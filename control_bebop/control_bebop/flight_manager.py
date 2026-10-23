@@ -96,7 +96,8 @@ class FlightManager(Node):
         self.declare_parameter('frequency', 20.0)
         self.declare_parameter('home_x', 0.0)
         self.declare_parameter('home_y', 0.0)
-        # Visión al mando (use_vision y no vision_shadow): sin lock no se
+        # Visión al mando (use_vision y no vision_shadow): sin lock (posición con
+        # incertidumbre > vision_max_sigma, mucho rato sin ver marcadores) no se
         # inicia la órbita y tras vision_loss_hover_time sin lock → HOVER
         self.declare_parameter('use_vision', False)
         self.declare_parameter('vision_shadow', True)
@@ -137,7 +138,6 @@ class FlightManager(Node):
         self.pub_goal = self.create_publisher(Pose, '/goal', 10)
         self.pub_enable = self.create_publisher(Bool, '/bebop1/enable', 10)
         
-        from std_msgs.msg import Empty
         self.pub_takeoff = self.create_publisher(Empty, 'cmd_takeoff', 1)
         self.pub_land = self.create_publisher(Empty, 'cmd_land', 1)
         self.pub_emergency = self.create_publisher(Empty, '/bridge/emergency', 1)
@@ -280,13 +280,8 @@ class FlightManager(Node):
     # ══════════════════════════════════════════════════════════
 
     def _enter_takeoff(self):
-        from std_msgs.msg import Empty
-        if self.use_real_drone:
-            self.pub_takeoff.publish(Empty())
-            self.get_logger().info('🛫 Takeoff enviado al bridge (/bridge/takeoff)')
-        else:
-            self.get_logger().warn(
-                'use_real_drone=False → NO se envía takeoff al dron real')
+        # Real: el bridge lo manda al Bebop. Sim: sim_odometry activa la geocerca.
+        self.pub_takeoff.publish(Empty())
         self.goal_x = self.current_x
         self.goal_y = self.current_y
         self.goal_z = self.takeoff_height
@@ -304,9 +299,7 @@ class FlightManager(Node):
             f'{self.goal_z:.2f})')
 
     def _enter_landing(self):
-        from std_msgs.msg import Empty
-        if self.use_real_drone:
-            self.pub_land.publish(Empty())
+        self.pub_land.publish(Empty())
         self.landing_x = self.current_x
         self.landing_y = self.current_y
         self.landing_z = self.current_z
@@ -383,28 +376,21 @@ class FlightManager(Node):
                               RECOVERY, RETURN_HOME):
                 self._force_landing('Aterrizaje solicitado (○)')
             elif self.use_real_drone:
-                from std_msgs.msg import Empty
                 self.pub_land.publish(Empty())
                 self.get_logger().info('○ Land enviado (estado IDLE, por seguridad)')
 
         elif cmd == CMD_EMERGENCY:
-            # △ = aterrizaje inmediato (NO corta motores en el aire)
-            if self.use_real_drone:
-                if self.state != IDLE:
-                    self._force_landing('△ Parada → aterrizaje inmediato')
-            elif self.state != IDLE:
-                self._transition_to(EMERGENCY)
+            # △ = aterrizaje inmediato, igual en real y simulación (no corta motores)
+            if self.state not in (IDLE, EMERGENCY):
+                self._force_landing('△ Parada → aterrizaje inmediato')
 
         elif cmd == CMD_KILL:
-            from std_msgs.msg import Empty
             self.get_logger().error('🚨 KILL recibido: forzando EMERGENCY y apagando motores')
-            if self.use_real_drone:
-                self.pub_emergency.publish(Empty())
+            self.pub_emergency.publish(Empty())
             if self.state != IDLE:
                 self._transition_to(EMERGENCY)
 
         elif cmd == CMD_FLATTRIM:
-            from std_msgs.msg import Empty
             if self.state == IDLE:
                 self.get_logger().info('📐 Solicitud FlatTrim en IDLE')
                 if self.use_real_drone:
@@ -414,7 +400,7 @@ class FlightManager(Node):
 
         elif cmd == CMD_AUTO:
             if self.vision_required and not self.vision_lock:
-                self.get_logger().warn('Órbita rechazada: sin lock visual (marcadores)')
+                self.get_logger().warn('Órbita rechazada: posición incierta (sin marcadores hace rato)')
             elif self.deadman_active and self.state in (HOVER, MANUAL):
                 self._transition_to(AUTOMATIC)
 
@@ -476,14 +462,14 @@ class FlightManager(Node):
             self.get_logger().info('Pose visual reinicializada: goal en la posición actual')
 
     def _check_vision(self):
-        """Sin lock visual un rato en un estado que sigue una posición → HOVER."""
+        """Posición incierta un rato en un estado que sigue una posición → HOVER."""
         if not self.vision_required or self.state not in (AUTOMATIC, RECOVERY, RETURN_HOME):
             return
         now = self.get_clock().now()
         since = (float('inf') if self.last_vision_lock_time is None
                  else (now - self.last_vision_lock_time).nanoseconds / 1e9)
         if since > self.vision_loss_hover_time:
-            self.get_logger().warn(f'⚠️ Sin visión {since:.1f} s → HOVER (odometría pura)')
+            self.get_logger().warn(f'⚠️ Posición incierta hace {since:.1f} s (sin marcadores) → HOVER')
             self._transition_to(HOVER)
 
     # ══════════════════════════════════════════════════════════
@@ -555,13 +541,12 @@ class FlightManager(Node):
                 self.get_logger().warn(' Deadman suelto → HOVER')
                 self._transition_to(HOVER)
 
-        # En dron real: si el mando deja de enviar mensajes → aterrizar
-        if self.use_real_drone and self.state in (HOVER, MANUAL, AUTOMATIC):
+        # Si el mando deja de enviar mensajes → aterrizar (AUTOMATIC no admite
+        # LANDING en la tabla, por eso _force_landing)
+        if self.state in (HOVER, MANUAL, AUTOMATIC):
             silence = (now - self.last_joy_msg_time).nanoseconds / 1e9
             if silence > self.comm_loss_land_timeout:
-                self.get_logger().error(
-                    f'🚨 Mando sin señal ({silence:.1f}s) → Aterrizando por seguridad...')
-                self._transition_to(LANDING)
+                self._force_landing(f'🚨 Mando sin señal ({silence:.1f}s)')
 
     def _check_arena_limits(self):
         """Si el dron sale de la arena o excede altura máxima → RECOVERY."""
