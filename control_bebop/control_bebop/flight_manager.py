@@ -20,8 +20,11 @@ Estados:
 import math
 import rclpy
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from geometry_msgs.msg import Pose, Twist
 from std_msgs.msg import Int32, Bool, Empty
+
+from control_bebop.safety import route_around
 
 
 # ── Constantes de estado ──────────────────────────────────────
@@ -102,6 +105,10 @@ class FlightManager(Node):
         self.declare_parameter('use_vision', False)
         self.declare_parameter('vision_shadow', True)
         self.declare_parameter('vision_loss_hover_time', 2.0)
+        # Zonas que RETURN_HOME y RECOVERY rodean en vez de cruzar en línea recta:
+        # [xmin, ymin, xmax, ymax, ...] en el marco de despegue. Vacío = directo.
+        self.declare_parameter('no_fly_boxes', Parameter.Type.DOUBLE_ARRAY)
+        self.declare_parameter('no_fly_margin', 0.5)
 
         self.use_real_drone = self.get_parameter('use_real_drone').value
         self.takeoff_height = self.get_parameter('takeoff_height').value
@@ -126,6 +133,10 @@ class FlightManager(Node):
         self.freq = self.get_parameter('frequency').value
         self.home_x = self.get_parameter('home_x').value
         self.home_y = self.get_parameter('home_y').value
+        flat = self.get_parameter('no_fly_boxes').value or []
+        self.no_fly = [tuple(flat[i:i + 4]) for i in range(0, len(flat) - 3, 4)]
+        self.no_fly_margin = self.get_parameter('no_fly_margin').value
+        self.route = []
         self.vision_required = (self.get_parameter('use_vision').value
                                 and not self.get_parameter('vision_shadow').value)
         self.vision_loss_hover_time = self.get_parameter('vision_loss_hover_time').value
@@ -311,6 +322,7 @@ class FlightManager(Node):
         self.goal_y = 0.0
         self.goal_z = self.takeoff_height
         self.goal_yaw = 0.0
+        self._plan_route(0.0, 0.0)
         self.get_logger().warn(
             'Regresando')
 
@@ -319,7 +331,15 @@ class FlightManager(Node):
         self.goal_y = self.home_y
         self.goal_z = self.takeoff_height
         self.goal_yaw = 0.0
+        self._plan_route(self.home_x, self.home_y)
         self.get_logger().info('Regresando a home')
+
+    def _plan_route(self, x, y):
+        self.route = route_around((self.current_x, self.current_y), (x, y),
+                                  self.no_fly, self.no_fly_margin)
+        if len(self.route) > 1:
+            pts = ' → '.join(f'({px:.1f}, {py:.1f})' for px, py in self.route)
+            self.get_logger().info(f'Ruta rodeando zonas prohibidas: {pts}')
 
     def _enter_manual(self):
         self.goal_x = self.current_x
@@ -511,8 +531,8 @@ class FlightManager(Node):
             self._update_landing()
 
         elif self.state == RECOVERY:
-            self._update_go_to_point(
-                0.0, 0.0, self.takeoff_height, 0.0,
+            self._follow_route(
+                self.takeoff_height,
                 on_arrival_state=HOVER,
                 log_msg='Recovery completado → Hover')
 
@@ -521,8 +541,8 @@ class FlightManager(Node):
             log = ('En home → Aterrizando'
                    if self.auto_land_on_home
                    else ' En home → Hover')
-            self._update_go_to_point(
-                self.home_x, self.home_y, self.takeoff_height, 0.0,
+            self._follow_route(
+                self.takeoff_height,
                 on_arrival_state=on_arrival,
                 log_msg=log)
 
@@ -626,6 +646,19 @@ class FlightManager(Node):
             if self.current_z < self.touchdown_z:
                 self.get_logger().info(' Aterrizaje completado')
                 self._transition_to(IDLE)
+
+    def _follow_route(self, tz, on_arrival_state, log_msg):
+        """Recorre self.route; el último punto es el destino."""
+        tx, ty = self.route[0]
+        if len(self.route) == 1:
+            self._update_go_to_point(tx, ty, tz, 0.0, on_arrival_state, log_msg)
+            if self.state == LANDING:
+                # Bajar sobre home, no donde entró en la tolerancia (plataforma chica)
+                self.landing_x, self.landing_y = tx, ty
+            return
+        self._publish_goal(tx, ty, tz, 0.0)
+        if math.hypot(self.current_x - tx, self.current_y - ty) < self.pos_tol:
+            self.route.pop(0)
 
     def _update_go_to_point(self, tx, ty, tz, tyaw,
                             on_arrival_state, log_msg):

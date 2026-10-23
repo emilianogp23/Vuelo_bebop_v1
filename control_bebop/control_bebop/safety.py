@@ -182,3 +182,58 @@ def scale_trim_clamp(cmd, gains, trims, limits):
 def is_stale(now_s, last_s, timeout_s):
     """True si el último mensaje es más viejo que el timeout (o no existe)."""
     return last_s is None or (now_s - last_s) > timeout_s
+
+
+def _crosses(a, b, box, pad):
+    """True si el segmento a-b entra al interior de box (xmin, ymin, xmax, ymax) + pad."""
+    lo_x, lo_y, hi_x, hi_y = box[0] - pad, box[1] - pad, box[2] + pad, box[3] + pad
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    t0, t1 = 0.0, 1.0
+    # Liang-Barsky; tocar un borde o una esquina no cuenta como cruzar
+    for p, q in ((-dx, a[0] - lo_x), (dx, hi_x - a[0]), (-dy, a[1] - lo_y), (dy, hi_y - a[1])):
+        if abs(p) < 1e-12:
+            if q <= 0.0:
+                return False
+        elif p < 0.0:
+            t0 = max(t0, q / p)
+        else:
+            t1 = min(t1, q / p)
+    return t1 - t0 > 1e-9
+
+
+def route_around(start, goal, boxes, margin):
+    """Camino más corto de start a goal en xy que rodea las cajas prohibidas.
+
+    boxes: [(xmin, ymin, xmax, ymax), ...]. Pasa por las esquinas de cada caja
+    agrandada margin. Devuelve los waypoints sin start, el último es goal;
+    sin camino posible devuelve [goal].
+    """
+    pad = 0.9 * margin   # las esquinas quedan a margin: los lados entre ellas no chocan
+
+    def inside(p, box):
+        return box[0] - pad < p[0] < box[2] + pad and box[1] - pad < p[1] < box[3] + pad
+
+    def clear(a, b):
+        # Un extremo ya dentro del margen (vuelo manual pegado al edificio): solo la caja real
+        return not any(_crosses(a, b, box, 0.0 if inside(a, box) or inside(b, box) else pad)
+                       for box in boxes)
+
+    nodes = [tuple(start), tuple(goal)] + [
+        (x, y) for b in boxes
+        for x in (b[0] - margin, b[2] + margin) for y in (b[1] - margin, b[3] + margin)]
+    dist, prev, todo = {0: 0.0}, {}, set(range(len(nodes)))
+    while todo:
+        i = min(todo, key=lambda k: dist.get(k, math.inf))
+        if i == 1 or i not in dist:
+            break
+        todo.remove(i)
+        for j in todo:
+            d = dist[i] + math.dist(nodes[i], nodes[j])
+            if d < dist.get(j, math.inf) and clear(nodes[i], nodes[j]):
+                dist[j], prev[j] = d, i
+    if 1 not in dist:
+        return [tuple(goal)]
+    path = [1]
+    while path[-1] != 0:
+        path.append(prev[path[-1]])
+    return [nodes[k] for k in reversed(path[:-1])]

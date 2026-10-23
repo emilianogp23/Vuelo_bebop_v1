@@ -16,6 +16,7 @@ Repositorio git: `~/ros2_ws/src` (rama `main`; remotas `avance-laptop`, `rama-es
 - `bebop_ros/`: simulación (copia de juliordzcer/bebop_ros). Solo se usan `bebop_gz` (mundo `bebop1.sdf`, modelo, plugins) y `bebop_demo` (`set_pose`).
 - `patches/`: parche al driver (altura medida, techo de firmware, calibración de cámara).
 - Externos en `~/ros2_ws/src`, fuera del repo: `ros2_bebop_driver` (jeremyfix, alfa; con el parche aplicado en el escritorio) y `ros2_parrot_arsdk`. También hay paquetes ajenos al proyecto: `drone_gazebo`, `my_robot_project`, `VeranoUG2026-Optimizador_Trayectoria`.
+- `drone_gazebo` (Matrice 100, ignorado por git): `matrice_flight.launch.py` (23 oct) usa los nodos de control_bebop sin copiarlos; `config/matrice.yaml` escala la órbita (r 20 m, 6 m de altura, alrededor de la estación de bomberos) y la geocerca (±35 m). Si cambian los nombres de tópicos o parámetros de control_bebop, revisar ese launch. RETURN_HOME y RECOVERY rodean el edificio (`no_fly_boxes` de flight_manager, `route_around` en `safety.py`; vacío por defecto, el Bebop no cambia) y tras L1 aterriza exactamente sobre home. La plataforma quedó en el piso (z del mundo −0.472) y el dron centrado en su placa (1.92, −10).
 
 ## 3. Arquitectura
 joy_node → joystick_interface → flight_manager (máquina de estados, único que publica `/flight_state`) → trajectory_planner (`/goal`, `/goal_vel`) → control_PID (10 Hz).
@@ -31,13 +32,13 @@ Estados: 0 IDLE, 1 AUTOMATIC, 2 TAKING_OFF, 3 LANDING, 4 EMERGENCY, 5 HOVER, 6 M
 
 **Parámetros:** el real usa `config/real_drone.yaml`; la simulación carga ese mismo archivo y encima `config/sim.yaml`, que solo cambia ganancias (Gazebo recibe velocidad, el Bebop inclinación), `z_mode: pid`, cámara fija y corral de 4 × 4 m. Cada cambio en Python/YAML requiere `colcon build --packages-select control_bebop`.
 
-Marco de despegue = marco corral: origen en la cruz de la zona segura, x al frente del dron al despegar, **y a la izquierda**, z arriba. Órbita por defecto: centro (1, 0), radio 0.5, ω 0.10 rad/s, `yaw_mode: fixed` (pasar a `lookat` para escanear), altura de entrada.
+Marco de despegue = marco corral: origen en la cruz de la zona segura, x al frente del dron al despegar, **y a la izquierda**, z arriba. Órbita por defecto: centro (1, 0), radio 0.5, ω 0.10 rad/s, `yaw_mode: lookat` (desde el 23 oct; con `fixed` hay huecos de visión de 19–24 s), altura de entrada.
 
 Dinámica del Bebop real: pitch/roll es inclinación (≈ aceleración), retardo 0.2–0.9 s; comando cero = hover nativo con flujo óptico; ~0.21 rad/s de giro por unidad. Ganancias reales kp 0.25, kd 0.60 (con velocidad medida), ki 0.05, ff 0.20; las de Gazebo no sirven en el real.
 
 ## 4. Estado de la localización visual
 - Programada y probada en Gazebo (20 oct): error 0.10 m promedio contra la pose real; la odometría sola acumuló ~1 m.
-- Validación en mano en el dron real (23 oct, `scripts/punto_control.py`, resultados en `control_bebop/puntos_control.csv`): con dos marcadores, error de 1 a 10 cm y yaw ≤ 3°; con uno solo, 30–50 cm y 8–14°. Con eso, `real_drone.yaml` usa `min_markers: 2` (no publica pose con un solo marcador) y `max_reproj_px: 4.0` (con 2.0 descartaba todas las poses de dos marcadores). En simulación sigue `min_markers: 1`. La z visual sale 17–21 cm más alta (sin explicar, ¿altura del soporte mal medida?) y `vision_max_dz` es 0.30. Hueco sin marcadores en (1, 0) mirando a +x. Órbita recorrida en mano (bag `orbita_mano_20261023_1446`): en `lookat` hay poses en casi toda la vuelta, con huecos de 4 s como máximo; en `fixed`, huecos de 19 y 24 s (se perdería el lock). Ruido de cuadro a cuadro: mediana 4 cm, p95 12 cm. Con los motores apagados el Bebop no publica odometría ni altitud, así que la fusión y el lock solo se pueden probar volando (vuelo 1).
+- Validación en mano en el dron real (23 oct, `scripts/punto_control.py`, resultados en `control_bebop/puntos_control.csv`): con dos marcadores, error de 1 a 10 cm y yaw ≤ 3°; con uno solo, 30–50 cm y 8–14°. Con eso, `real_drone.yaml` usa `min_markers: 2` (no publica pose con un solo marcador) y `max_reproj_px: 4.0` (con 2.0 descartaba todas las poses de dos marcadores). En simulación sigue `min_markers: 1`. Hueco sin marcadores en (1, 0) mirando a +x. Órbita recorrida en mano (bag `orbita_mano_20261023_1446`): en `lookat` hay poses en casi toda la vuelta, con huecos de 4 s como máximo; en `fixed`, huecos de 19 y 24 s (se perdería el lock). Ruido de cuadro a cuadro: mediana 4 cm, p95 12 cm. Con los motores apagados el Bebop no publica odometría ni altitud, así que la fusión y el lock solo se pueden probar volando (vuelo 1).
 - Mapa del laboratorio (`aruco_map.yaml`): 0–1 enfrente (+x), 2–3 a la derecha del dron (−y), 4–5 atrás, 6–7 a la izquierda (+y), caras hacia el centro; 30–33 en el piso alrededor del objeto. El 22 oct se corrigieron la y (estaba medida al revés) y las caras (hacia afuera); el 23 oct, la x de los ids 3 (−1.22) y 5 (−2.52). Los del piso son nominales.
 - Simulación con la misma disposición de ids (`aruco_map_sim.yaml`, regenerado en `bebop1.sdf`).
 - Cámara calibrada el 23 oct (`config/bebop2_camera_calib.yaml`, 30 vistas, RMS 0.61 px; fx 530.4 contra 537.3 de fábrica). **Falta validarla** con los puntos de control (guía §6.5). El tablero impreso no es el de `generar_charuco.py`: es 5 × 7 con `DICT_6X6_250`, así que hay que pasar `-p squares_x:=5 -p squares_y:=7 -p dictionary:=DICT_6X6_250`.
@@ -59,9 +60,10 @@ Dinámica del Bebop real: pitch/roll es inclinación (≈ aceleración), retardo
 - 16 oct (bag `vuelo_real_20261016_093834`): no hizo el círculo. Derivó 0.5–1.5 m hacia atrás, la odometría solo vio ~0.25 m y la z integrada marcó 1.78 m volando a ~1 m. Se agregaron el parche de altura, el integral más fuerte y el HOVER por órbita atascada (`/trajectory_stalled`).
 - 19–20 oct: localización con ArUco; se descartó la cámara del techo (C920, resolución insuficiente). Reconstrucción con COLMAP.
 - 21 oct: filtro de altura de la visión (`vision_max_dz`), análisis de altura de órbita contra encuadre.
+- 23 oct 15:46 (bag `Bags_respaldo/vuelo_real_20261023_154624`): primer vuelo real con órbita, caja de cartón en (1, 0), `lookat`, modo sombra. La odometría se desvió ~1 m en 45 s; el control la siguió bien (RMS 0.12 m contra el goal), así que la órbita real quedó corrida hacia −y y terminó a ~0.3 m de la caja; aterrizaje en manual. **La fusión visual funcionó**: contra la trayectoria real (reconstruida con los ArUco del video) la corregida tuvo mediana 0.10 m y la odometría 0.75 m; lock el 100 % del tiempo en el aire; hueco máximo 14.4 s. El yaw de la odometría estuvo 15–19° desviado desde el despegue (la visión lo midió y lo corrigió). La z visual quedó a −7 cm (mediana) de la altitud medida: el sesgo de +17–21 cm de las pruebas en mano era la altura anotada. El parche de altura funciona (`/bebop1/pose` z = `/bebop/altitude`). El bag `vuelo_real_20261023_154513` es un intento previo sin odometría (38 s).
 
 ## 7. Problemas abiertos
-- Nada de lo de octubre (parche, visión, ganancias) se ha validado en el dron real.
+- Validados en vuelo real (23 oct): parche de altura, fusión visual en modo sombra, `lookat`. Desde entonces `real_drone.yaml` trae `vision_shadow: false` (visión al mando, también en simulación); falta volarlo (vuelos 3 y 4 de la guía).
 - Medir los ArUco del piso.
 - Altura de la órbita: con la cámara a −28° el bote (0.70–0.95 m) se encuadra a ~1.05–1.1 m, no a 1.5 m.
 - Con `yaw_mode: fixed` y la visión al mando, en Gazebo hay ~15 s sin marcadores cerca de x = 1.5 → se pierde el lock → HOVER. Con `lookat` completa.
@@ -75,7 +77,7 @@ Dinámica del Bebop real: pitch/roll es inclinación (≈ aceleración), retardo
 - Revisar que no quede un `ros2 bag record` colgado tras cerrar un launch (`pgrep -fa "ros2 bag"`).
 
 ## 8. Siguiente paso
-Guía §6 (pruebas con el dron encendido sin volar: driver con `MaxAltitude current=2.00 m`, `/bebop/altitude`, mando, ArUco en mano), §4 (calibrar la cámara) y luego vuelos 1–4 de la guía: hover y órbita en modo sombra, después con la visión al mando, `fixed` y luego `lookat`. Tras cada vuelo: `python3 control_bebop/scripts/analisis_bag.py <bag>`.
+Vuelo 3 de la guía (hover con la visión al mando; `real_drone.yaml` ya lo trae) y luego vuelo 4 (órbita en `lookat`). Antes de despegar, `ros2 topic hz /bebop/odom` (el intento de las 15:45 del 23 oct no tenía odometría). Ponerle textura a la caja para la reconstrucción. Tras cada vuelo: `python3 control_bebop/scripts/analisis_bag.py <bag>`.
 
 ## 9. Comandos útiles
 ```bash

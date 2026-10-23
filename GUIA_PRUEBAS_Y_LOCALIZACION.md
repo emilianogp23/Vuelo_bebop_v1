@@ -346,9 +346,11 @@ Con el dron en el piso, en la cruz: `ros2 topic pub --once /bebop/flattrim std_m
 
 ## 8. Vuelo 1: hover en modo sombra
 
-`real_drone.yaml` como viene: `use_vision: true`, `vision_shadow: true`. El control vuela con la odometría sola; la corrección solo se calcula y se graba.
+`real_drone.yaml` con `use_vision: true`, `vision_shadow: true` (desde el 23 oct viene en `false`: ver vuelo 3). El control vuela con la odometría sola; la corrección solo se calcula y se graba.
 ```bash
-ros2 launch ros2_bebop_driver bebop_node_launch.xml ip:=192.168.42.1 max_altitude:=2.0
+ros2 launch ros2_bebop_driver bebop_node_launch.xml ip:=192.168.42.1 max_altitude:=2.0 \
+    camera_calibration_file:=file://$HOME/ros2_ws/src/control_bebop/config/bebop2_camera_calib.yaml
+ros2 topic hz /bebop/odom        # antes de despegar: debe publicar (~15 Hz); si no, reiniciar el driver
 ros2 launch control_bebop real_flight.launch.py           # obj_suelo:=true para el Pioneer
 ```
 El launch abre el plot 3D y el panel de odometría, lanza el localizador y graba el bag en `control_bebop/bags/vuelo_real_<fecha>`.
@@ -365,7 +367,9 @@ python3 ~/ros2_ws/src/control_bebop/scripts/analisis_bag.py ~/ros2_ws/src/contro
 
 ## 9. Vuelo 2: órbita en modo sombra
 
-Igual que el vuelo 1, con `yaw_mode: fixed`. Después del hover: subir a ~1.1 m en manual (□ y cruceta), volver a auto (□) y R1.
+Hecho el 23 oct con `lookat` (bag `Bags_respaldo/vuelo_real_20261023_154624`): la odometría se desvió ~1 m en 45 s y la órbita real quedó corrida hacia −y; la corregida quedó a 0.10 m (mediana) de la posición real, con lock todo el vuelo. Huecos de 10 y 14 s en la aproximación: la caja tapa los marcadores 0 y 1.
+
+Igual que el vuelo 1, con `yaw_mode: lookat`. Después del hover: subir a ~1.1 m en manual (□ y cruceta), volver a auto (□) y R1.
 
 Si la órbita vuelve a fallar por deriva, la cian lo muestra (el dron real fuera del círculo) aunque la magenta diga que va bien: es la prueba de que la corrección hace falta y de que la visión la ve.
 
@@ -373,7 +377,7 @@ Criterio: hay lock durante toda la órbita (título `LOCK`) y la cian coincide c
 
 ## 10. Vuelo 3: hover con visión al mando
 
-En `config/real_drone.yaml` poner `vision_shadow: false`, recompilar y lanzar igual. Qué cambia:
+`config/real_drone.yaml` ya trae `vision_shadow: false` (23 oct). Lanzar igual que el vuelo 1. Qué cambia:
 - `/bebop1/pose` es la pose corregida: el control y la geocerca usan la visión.
 - R1 se rechaza sin lock ("Órbita rechazada: posición incierta").
 - Sin lock más de 2 s en AUTOMATIC, RECOVERY o RETURN_HOME (unos 17 s sin ningún marcador) → HOVER.
@@ -388,11 +392,11 @@ Criterio: en hover se mantiene a < 15 cm de su goal durante 60 s y aterriza a < 
 
 ## 11. Vuelo 4: órbita con visión
 
-1. `yaw_mode: fixed`. Despegar, subir a ~1.1 m en manual, auto, R1. Una vuelta completa.
-2. Si sale bien, `yaw_mode: lookat` (el dron gira para mirar al objeto) y repetir.
+1. `yaw_mode: lookat` (el que trae `real_drone.yaml`). Despegar, subir a ~1.1 m en manual, auto, R1. Una vuelta completa.
+2. Si el lock se pierde en la aproximación (huecos de 10–14 s en el vuelo 2) el dron pasa a HOVER: esperar a que el plot vuelva a decir `LOCK` y R1 para reanudar.
 
-Ojo con `fixed` y la visión al mando: en Gazebo (22 oct), con la cámara siempre hacia +x, en el tramo de la órbita cercano a x = 1.5 m no se ve ningún ArUco durante ~15 s, se pierde el lock y el dron pasa a HOVER. Con `lookat` la vuelta se completa. Si en el vuelo 2 (sombra, `fixed`) el análisis muestra un hueco largo, hacer el vuelo 4 directo en `lookat`.
-3. Revisar el video (`control_bebop/videos/`) y probar la reconstrucción: `python3 scripts/reconstruccion_3d.py videos/vuelo_<fecha>.avi`.
+Ojo con `fixed` y la visión al mando: en Gazebo (22 oct), con la cámara siempre hacia +x, en el tramo de la órbita cercano a x = 1.5 m no se ve ningún ArUco durante ~15 s, se pierde el lock y el dron pasa a HOVER. Con `lookat` la vuelta se completa. Recorriendo la órbita en mano (23 oct), con `fixed` hubo huecos de 19 y 24 s: por eso se vuela en `lookat`.
+3. Revisar el video (`control_bebop/videos/`) y probar la reconstrucción: `python3 scripts/reconstruccion_3d.py videos/vuelo_<fecha>.avi` (ruta entre comillas si tiene espacios). Al cartón liso le faltan puntos: pegarle textura (periódico, etiquetas).
 
 Criterio: órbita completa sin `/trajectory_stalled`, error de seguimiento < 0.15 m.
 

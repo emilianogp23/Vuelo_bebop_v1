@@ -51,7 +51,9 @@
     # sin marcadores: de 0.05 a 0.20 m en ~15 s. Sin lock R1 no inicia la
     # órbita y tras vision_loss_hover_time → HOVER (solo con visión al mando).
     use_vision: true
-    vision_shadow: true
+    # 23 oct: en modo sombra la corregida quedó a 0.10 m (mediana) de la posición
+    # real y la odometría a 0.75 m → visión al mando desde el vuelo 3.
+    vision_shadow: false
     vision_q_xy: 0.0025
     vision_q_yaw: 0.0001
     vision_gate_sigma: 3.0         # rechaza mediciones a más de 3σ de lo esperado
