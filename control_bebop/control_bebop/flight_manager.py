@@ -19,6 +19,7 @@ Estados:
 
 import math
 import rclpy
+from rclpy.exceptions import ParameterUninitializedException
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from geometry_msgs.msg import Pose, Twist
@@ -133,7 +134,10 @@ class FlightManager(Node):
         self.freq = self.get_parameter('frequency').value
         self.home_x = self.get_parameter('home_x').value
         self.home_y = self.get_parameter('home_y').value
-        flat = self.get_parameter('no_fly_boxes').value or []
+        try:
+            flat = self.get_parameter('no_fly_boxes').value or []
+        except ParameterUninitializedException:
+            flat = []   # sin no_fly_boxes en el YAML (real_drone.yaml): ruta directa
         self.no_fly = [tuple(flat[i:i + 4]) for i in range(0, len(flat) - 3, 4)]
         self.no_fly_margin = self.get_parameter('no_fly_margin').value
         self.route = []
