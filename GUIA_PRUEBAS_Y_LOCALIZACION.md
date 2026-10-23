@@ -217,6 +217,7 @@ Con RMS > 1 px no guarda: revisar `square_length`, que el tablero esté plano y 
 ```bash
 ros2 launch ros2_bebop_driver bebop_node_launch.xml ip:=192.168.42.1 max_altitude:=2.0 \
     camera_calibration_file:=file://$HOME/ros2_ws/src/control_bebop/config/bebop2_camera_calib.yaml
+
 ros2 topic echo /bebop/camera/camera_info --once --field k     # debe mostrar la K nueva
 ```
 `real_flight.launch.py launch_driver:=true` la toma sola si el archivo existe. `aruco_localizer` lee la K una sola vez al arrancar: reiniciarlo después de cambiar de calibración.
