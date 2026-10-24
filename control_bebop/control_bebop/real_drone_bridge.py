@@ -67,6 +67,7 @@ def vision_fusion_from_params(node):
     """VisionFusion con los parámetros vision_* (también la usa sim_odometry)."""
     for name, default in (
             ('vision_q_xy', 0.0025),             # m²/s de deriva de la odometría
+            ('vision_q_move', 0.0),              # m²/m: deriva por distancia recorrida
             ('vision_q_yaw', 1e-4),              # rad²/s
             ('vision_gate_sigma', 3.0),          # rechazo a más de N desviaciones
             ('vision_max_sigma', 0.20),          # m; arriba de esto no hay lock
@@ -82,7 +83,7 @@ def vision_fusion_from_params(node):
         max_dz=gp('vision_max_dz'),
         init_sigma_xy=gp('vision_init_sigma_xy'),
         init_sigma_yaw=math.radians(gp('vision_init_sigma_yaw_deg')),
-        q_xy=gp('vision_q_xy'), q_yaw=gp('vision_q_yaw'),
+        q_xy=gp('vision_q_xy'), q_yaw=gp('vision_q_yaw'), q_move=gp('vision_q_move'),
         gate_sigma=gp('vision_gate_sigma'),
         rate_xy=gp('vision_offset_rate_xy'),
         rate_yaw=math.radians(gp('vision_offset_rate_yaw_deg')))

@@ -425,11 +425,15 @@ class FlightManager(Node):
         elif cmd == CMD_AUTO:
             if self.vision_required and not self.vision_lock:
                 self.get_logger().warn('Órbita rechazada: posición incierta (sin marcadores hace rato)')
-            elif self.deadman_active and self.state in (HOVER, MANUAL):
+            elif not self.deadman_active:
+                self.get_logger().warn('Órbita rechazada: mantén L2 (deadman) presionado')
+            elif self.state in (HOVER, MANUAL):
                 self._transition_to(AUTOMATIC)
 
         elif cmd == CMD_MANUAL:
-            if self.deadman_active and self.state in (HOVER, AUTOMATIC):
+            if not self.deadman_active:
+                self.get_logger().warn('Manual rechazado: mantén L2 (deadman) presionado')
+            elif self.state in (HOVER, AUTOMATIC):
                 self._transition_to(MANUAL)
 
         elif cmd == CMD_RETURN_HOME:

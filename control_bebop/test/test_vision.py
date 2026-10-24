@@ -146,6 +146,16 @@ def test_offset_filter_gate_opens_without_markers():
     assert f.offset[0] > 0.35
 
 
+def test_offset_filter_gate_opens_with_odometry_motion():
+    # 0.8 m de error tras 3 m de traslado en 10 s: solo con q_xy se rechaza; con q_move entra
+    for q_move, esperado in ((0.0, 'rejected'), (0.02, 'ok')):
+        v = VisionFusion(q_move=q_move)
+        v.takeoff(reanchor=True)
+        for i in range(11):
+            v.odom(i, 0.3 * i, 0.0, 0.0)
+        assert v.vision(10.0, (2.2, 0.0, 0.0), 0.03, 0.03) == esperado
+
+
 def test_offset_filter_applies_correction_gradually():
     f = OffsetFilter(rate_xy=0.1)
     f.reset(0.05, 0.05)

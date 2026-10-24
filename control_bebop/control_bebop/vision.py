@@ -205,8 +205,9 @@ class OdomHistory:
 class OffsetFilter:
     """Kalman de 3 estados del error de la odometría: pose_corral = offset ∘ pose_odom.
 
-    La incertidumbre crece con el tiempo (la odometría deriva) y cada medición
-    visual la reduce según su covarianza. Mediciones a más de ``gate_sigma``
+    La incertidumbre crece con el tiempo (la odometría deriva) y con la distancia
+    que mide la odometría (``q_move``: en un traslado rápido el Bebop real erró
+    ~1 m en 3 m, 23 oct) y cada medición visual la reduce según su covarianza. Mediciones a más de ``gate_sigma``
     desviaciones de lo esperado se rechazan. No hay re-localización forzada:
     mientras se rechaza, la incertidumbre sigue creciendo y el gate se abre
     solo (un error real de 0.5 m entra en ~10 s; una racha de PnP espejo de un
@@ -218,8 +219,9 @@ class OffsetFilter:
     """
 
     def __init__(self, q_xy=0.0025, q_yaw=1e-4, gate_sigma=3.0,
-                 rate_xy=0.10, rate_yaw=math.radians(5.0)):
+                 rate_xy=0.10, rate_yaw=math.radians(5.0), q_move=0.0):
         self.q_xy = q_xy
+        self.q_move = q_move
         self.q_yaw = q_yaw
         self.gate_sigma = gate_sigma
         self.rate_xy = rate_xy
@@ -239,7 +241,11 @@ class OffsetFilter:
     def sigma_xy(self):
         return math.sqrt(max(self.P[0], self.P[1])) if self.initialized else math.inf
 
-    def predict(self, t):
+    def predict(self, t, dist=0.0):
+        """``dist``: metros que avanzó la odometría desde la llamada anterior."""
+        # Fuera del if: el Bebop repite marcas de tiempo y esa distancia se perdería
+        self.P[0] += self.q_move * dist
+        self.P[1] += self.q_move * dist
         if self.last_t is not None and t > self.last_t:
             dt = t - self.last_t
             self.P[0] += self.q_xy * dt
@@ -331,8 +337,9 @@ class VisionFusion:
 
     def odom(self, t, x, y, yaw):
         """Pose corregida (x, y, yaw) o None si el filtro no está inicializado."""
+        prev = self.hist.buf[-1] if self.hist.buf else None
         self.hist.add(t, x, y, yaw)
-        self.filter.predict(t)
+        self.filter.predict(t, 0.0 if prev is None else math.hypot(x - prev[1], y - prev[2]))
         return self.filter.apply(x, y, yaw) if self.filter.initialized else None
 
     def vision(self, t, meas, sigma_xy, sigma_yaw, z_err=None):

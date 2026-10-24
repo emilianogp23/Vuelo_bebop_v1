@@ -55,12 +55,17 @@
     # real y la odometría a 0.75 m → visión al mando desde el vuelo 3.
     vision_shadow: false
     vision_q_xy: 0.0025
+    # Incertidumbre por metro que mide la odometría (m²/m). El 23 oct, volando
+    # rápido en manual, la odometría erró ~1 m en 3 m y con solo q_xy el filtro
+    # rechazaba las mediciones buenas. Reproducido offline contra el video: p90
+    # 94 → 46 cm en ese vuelo (con rate_xy 0.25), la órbita lenta igual.
+    vision_q_move: 0.02
     vision_q_yaw: 0.0001
     vision_gate_sigma: 3.0         # rechaza mediciones a más de 3σ de lo esperado
     vision_max_sigma: 0.20
     vision_init_sigma_xy: 0.05     # el dron se coloca en el origen mirando a +x
     vision_init_sigma_yaw_deg: 3.0
-    vision_offset_rate_xy: 0.10    # m/s: la corrección entra suave, sin escalón
+    vision_offset_rate_xy: 0.25    # m/s: la corrección entra suave, sin escalón (0.10 tardaba 10 s en corregir 1 m)
     vision_offset_rate_yaw_deg: 5.0
     vision_loss_hover_time: 2.0
     # aruco_localizer. Validación en mano del 23 oct (puntos de control, guía
