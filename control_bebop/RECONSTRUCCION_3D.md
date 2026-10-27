@@ -53,6 +53,9 @@ abrir la carpeta en la GUI de COLMAP (`colmap gui`, File → Import model →
 | Opción | Defecto | Para qué |
 |---|---|---|
 | `--frames N` | 120 | Frames a usar. 60 a 150 para una órbita. Más = más lento |
+| `--bag RUTA` | — | Bag del vuelo. Reparte los frames por **ángulo** alrededor del objeto (un frame nítido por sector) y solo con el dron en AUTOMATIC; así las pausas de la órbita no amontonan frames ni dejan huecos. Requiere ROS 2 (`source /opt/ros/humble/setup.bash`) |
+| `--centro X,Y` | centro del círculo ajustado | Posición del objeto en el marco del bag, si no coincide con el centro de la órbita |
+| `--offset-bag S` | 0 | Segundos a sumar al tiempo del video respecto al bag (el video empieza con el primer estado de vuelo y dura lo que el bag) |
 | `--skip-start N`, `--skip-end N` | 0 | Frames a ignorar del despegue y aterrizaje |
 | `--blur R` | 0.35 | Descarta tramos con nitidez < R·mediana (0 = no filtra) |
 | `--ancho PX` | original | Reduce los frames (más rápido) |

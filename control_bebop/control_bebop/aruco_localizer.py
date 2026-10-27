@@ -29,7 +29,7 @@ from control_bebop.frames import quaternion_from_yaw
 from control_bebop.paths import config_file
 from control_bebop.vision import (camera_in_world, detect, load_marker_map,
                                   make_detector, marker_side_px,
-                                  measurement_sigma, onboard_drone_pose,
+                                  MeasurementJumpFilter, measurement_sigma, onboard_drone_pose,
                                   solve_pnp)
 
 
@@ -68,6 +68,10 @@ class ArucoLocalizer(Node):
         self.declare_parameter('max_distance', 4.5)
         self.declare_parameter('sigma_xy', 0.03)          # a 1.5 m con un marcador
         self.declare_parameter('sigma_yaw_deg', 2.0)
+        # Poses volteadas de PnP (0.5–1 m, 5–9 % de las mediciones con 2 marcadores
+        # lejanos, 27 oct): se rechaza un salto > max_meas_jump salvo que se confirme
+        self.declare_parameter('max_meas_jump', 0.5)      # 0 = sin filtro
+        self.declare_parameter('sigma_few_factor', 1.5)   # σ ×k con menos de 3 marcadores
         # Simulación: la imagen trae hora de Gazebo y la odometría del reloj del nodo
         # shortcut: ignora la latencia del render (~1 cuadro), usar /clock si importa
         self.declare_parameter('stamp_with_receive_time', False)
@@ -90,12 +94,15 @@ class ArucoLocalizer(Node):
         self.sigma_xy = gp('sigma_xy').value
         self.sigma_yaw = math.radians(gp('sigma_yaw_deg').value)
         self.receive_stamp = gp('stamp_with_receive_time').value
+        self.sigma_few = gp('sigma_few_factor').value
+        self.jump = (MeasurementJumpFilter(max_jump=gp('max_meas_jump').value)
+                     if gp('max_meas_jump').value > 0 else None)
 
         self.bridge = CvBridge()
         self.K = None
         self.D = None
         self.last_proc = 0.0
-        self.stats = {'frames': 0, 'poses': 0}
+        self.stats = {'frames': 0, 'poses': 0, 'saltos': 0}
 
         qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
                          history=HistoryPolicy.KEEP_LAST, depth=1)
@@ -160,7 +167,12 @@ class ArucoLocalizer(Node):
         if dist > self.max_dist:
             return
         x, y, z, yaw = onboard_drone_pose(R_wc, cam, self.cam_offset_x)
+        if self.jump is not None and not self.jump.accept(t, x, y):
+            self.stats['saltos'] += 1
+            return
         sxy, syaw = measurement_sigma(dist, len(found), self.sigma_xy, self.sigma_yaw)
+        if len(found) < 3:
+            sxy, syaw = sxy * self.sigma_few, syaw * self.sigma_few
         self.pub.publish(pose_msg(stamp, x, y, z, yaw - self.pan, sxy, syaw))
         self.stats['poses'] += 1
 
@@ -169,8 +181,9 @@ class ArucoLocalizer(Node):
             self.get_logger().warn('Sin camera_info: ¿driver corriendo?')
         else:
             self.get_logger().info(
-                f'Cuadros procesados {self.stats["frames"]}, poses {self.stats["poses"]} (últimos 5 s)')
-        self.stats = {'frames': 0, 'poses': 0}
+                f'Cuadros procesados {self.stats["frames"]}, poses {self.stats["poses"]}, '
+                f'saltos rechazados {self.stats["saltos"]} (últimos 5 s)')
+        self.stats = {'frames': 0, 'poses': 0, 'saltos': 0}
 
 
 def main(args=None):

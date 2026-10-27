@@ -236,3 +236,20 @@ def test_fusion_rejects_measurement_with_wrong_height():
     v.odom(0.0, 0.5, 0.0, 0.0)
     assert v.vision(0.0, (0.5, 0.0, 0.0), 0.03, 0.03, z_err=0.45) == 'rejected_z'
     assert v.vision(0.0, (0.5, 0.0, 0.0), 0.03, 0.03, z_err=0.10) == 'ok'
+
+
+def test_jump_filter_rejects_isolated_flip_but_accepts_confirmed_jump():
+    from control_bebop.vision import MeasurementJumpFilter
+    f = MeasurementJumpFilter(max_jump=0.5, confirm=3)
+    assert f.accept(0.0, 1.0, 0.0) and f.accept(0.1, 1.02, 0.01)
+    assert not f.accept(0.2, 1.0, 1.2)          # volteada aislada
+    assert f.accept(0.3, 1.03, 0.02)            # vuelve a la pista
+    assert not f.accept(0.4, 1.0, 1.2) and not f.accept(0.5, 1.0, 1.21)
+    assert f.accept(0.6, 1.01, 1.2)             # 3 seguidas coinciden: salto real
+
+
+def test_jump_filter_accepts_after_gap():
+    from control_bebop.vision import MeasurementJumpFilter
+    f = MeasurementJumpFilter()
+    assert f.accept(0.0, 0.0, 0.0)
+    assert f.accept(10.0, 2.0, 2.0)

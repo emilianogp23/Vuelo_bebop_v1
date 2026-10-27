@@ -1,4 +1,6 @@
 """Pruebas de control_bebop.reconstruccion que no necesitan COLMAP ni OpenCV."""
+import numpy as np
+
 from control_bebop import reconstruccion as rec
 
 
@@ -64,3 +66,26 @@ def test_sparse_normals_ply(tmp_path):
     assert rec.sparse_normals_ply(str(tmp_path), str(out)) == 30
     text = out.read_text().splitlines()
     assert 'element vertex 30' in text and len(text) == 13 + 30
+
+
+def test_select_frames_by_angle_even_sectors_despite_pause():
+    # 100 frames: la órbita se pausa en 0° (50 frames) y el resto recorre el círculo
+    ang = np.concatenate([np.zeros(50), np.linspace(0, 2 * np.pi, 50, endpoint=False)])
+    scores = np.ones(100)
+    keep = rec.select_frames_by_angle(scores, ang, 10, blur_ratio=0)
+    sectors = {int(np.floor(ang[i] / (2 * np.pi) * 10)) for i in keep}
+    assert len(keep) == 10 and sectors == set(range(10))
+
+
+def test_select_frames_by_angle_skips_nan_and_empty_sectors():
+    ang = np.array([0.1, 0.2, np.nan, np.nan, 3.2])
+    keep = rec.select_frames_by_angle([1, 5, 9, 9, 2], ang, 4, blur_ratio=0)
+    assert keep == [1, 4]
+
+
+def test_fit_circle_ignores_straight_approach():
+    th = np.linspace(0, 2 * np.pi, 80, endpoint=False)
+    x = np.concatenate([np.linspace(0, 0.1, 15), 0.7 + 0.8 * np.cos(th)])
+    y = np.concatenate([np.zeros(15), -0.1 + 0.8 * np.sin(th)])
+    cx, cy, r = rec.fit_circle(x, y)
+    assert abs(cx - 0.7) < 0.03 and abs(cy + 0.1) < 0.03 and abs(r - 0.8) < 0.03

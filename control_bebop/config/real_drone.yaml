@@ -74,9 +74,18 @@
     # marcadores (error de reproyección 2.6–2.9 px por la medición del mapa).
     min_markers: 2
     max_reproj_px: 4.0
+    # 27 oct: con 2 marcadores lejanos PnP a veces da una pose volteada 0.5–1 m
+    # (rachas de 3–6 s en el 112122). Un salto > max_meas_jump respecto a la
+    # última medición se rechaza salvo 6 seguidas coincidentes; con menos de
+    # 3 marcadores la σ declarada se multiplica por sigma_few_factor.
+    max_meas_jump: 0.5
+    sigma_few_factor: 1.5
     # Tilt de la cámara del Bebop para ver los ArUco de las vallas (también
     # afecta el video del escaneo). NaN = aruco_localizer no mueve la cámara.
-    camera_tilt_deg: -28.0
+    # 27 oct: -28° dejaba fuera de cuadro la cara cercana de la caja (h 1.1 m,
+    # r 0.6); -35° con r 0.85 la ve entera y aún ve los marcadores a 4 m
+    # (con -40° quedan fuera de cuadro).
+    camera_tilt_deg: -30.0
     # Con real_flight.launch.py obj_suelo:=true (objeto en el piso, Pioneer 3DX)
     # la cámara baja a este tilt durante la órbita. Para radio r y altura h:
     # tilt ≈ -atan((h - 0.12) / r); r 0.5 y h 1.5 → -70°.
@@ -129,9 +138,14 @@
     trim_y: 0.0
 
     # ── Trayectoria circular con orientación al centro (lookat) ──
-    target_x: 0.8          # Centro del círculo (m, marco de despegue)
+    # 27 oct: la caja (50x40x50 cm) debe quedar centrada en (target_x, target_y):
+    # marcar el punto en el piso y medirlo. Radio 0.85 (con 0.60 la cara cercana
+    # quedaba fuera de cuadro y la cámara pasaba a <0.5 m de la caja). La órbita llega a
+    # x = target_x + radio = 1.5 m, bajo el límite de 1.7 m de la geocerca; el
+    # planner lo recorta a (arena_half_size - safety_margin) - |target_x| = 0.95.
+    target_x: 0.70       # Centro del círculo (m, marco de despegue)
     target_y: 0.0
-    circle_radius: 0.60    # Radio del círculo (m)
+    circle_radius: 0.80    # Radio del círculo (m)
     circle_speed: 0.10     # vuelta en ~63 s; deja ~50 % de margen de yaw
     yaw_mode: lookat       # orientar el frente del dron hacia el centro
     lookat_center: true    # enfoca automáticamente (target_x, target_y)

@@ -170,6 +170,42 @@ def measurement_sigma(distance, n_markers, sigma_xy0, sigma_yaw0, d0=1.5):
     return sigma_xy0 * k, sigma_yaw0 * k
 
 
+class MeasurementJumpFilter:
+    """Descarta mediciones ArUco aisladas que saltan de la anterior.
+
+    Con pocos marcadores lejanos PnP puede dar una pose volteada (0.5–1 m
+    lejos) con la misma covarianza declarada que una buena. La posición real
+    no salta: una medición a más de ``max_jump`` (+ ``v_max``·dt) de la última
+    aceptada se rechaza, salvo que ``confirm`` mediciones seguidas coincidan
+    entre sí (``agree``): entonces el salto es real y se acepta. Tras un hueco
+    de más de ``max_gap`` s no hay referencia y se acepta la medición.
+    """
+
+    def __init__(self, max_jump=0.5, v_max=0.3, confirm=6, agree=0.25, max_gap=3.0):
+        self.max_jump, self.v_max = max_jump, v_max
+        self.confirm, self.agree, self.max_gap = confirm, agree, max_gap
+        self.ref = None        # (t, x, y) última aceptada
+        self.cand = None       # (t, x, y, n) candidata a nueva referencia
+
+    def accept(self, t, x, y):
+        if self.ref is None or t - self.ref[0] > self.max_gap:
+            self.ref, self.cand = (t, x, y), None
+            return True
+        dt = max(0.0, t - self.ref[0])
+        if math.hypot(x - self.ref[1], y - self.ref[2]) <= self.max_jump + self.v_max * dt:
+            self.ref, self.cand = (t, x, y), None
+            return True
+        if self.cand and math.hypot(x - self.cand[1], y - self.cand[2]) <= self.agree:
+            n = self.cand[3] + 1
+        else:
+            n = 1
+        self.cand = (t, x, y, n)
+        if n >= self.confirm:
+            self.ref, self.cand = (t, x, y), None
+            return True
+        return False
+
+
 # ── Fusión ────────────────────────────────────────────────────
 class OdomHistory:
     """Historial corto de poses de odometría para compensar el retraso del video."""

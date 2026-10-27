@@ -71,6 +71,119 @@ def select_frames(scores, n_target, blur_ratio=0.35):
     return keep
 
 
+def select_frames_by_angle(scores, angles, n_target, blur_ratio=0.35):
+    """Índices de frames repartidos por ángulo alrededor del objeto.
+
+    angles: ángulo (rad) de cada frame respecto al objeto; NaN = frame que no
+        sirve (fuera de la órbita). El círculo se parte en n_target sectores
+        iguales y de cada uno se toma el frame más nítido, de modo que una
+        pausa de la órbita no deja un hueco ni amontona frames en un lado.
+        Los sectores sin frames se omiten. blur_ratio como en select_frames.
+    """
+    scores = np.asarray(scores, dtype=float)
+    angles = np.asarray(angles, dtype=float)
+    ok = np.isfinite(angles)
+    if n_target <= 0 or not ok.any():
+        return []
+    sector = np.floor(np.mod(np.nan_to_num(angles), 2 * np.pi) / (2 * np.pi) * n_target).astype(int)
+    threshold = blur_ratio * float(np.median(scores[ok])) if blur_ratio > 0 else -np.inf
+    keep = []
+    for k in range(n_target):
+        idx = np.flatnonzero(ok & (sector == k))
+        if len(idx) == 0:
+            continue
+        best = int(idx[np.argmax(scores[idx])])
+        if scores[best] >= threshold:
+            keep.append(best)
+    return sorted(keep)
+
+
+def fit_circle(x, y, iters=3, tol=0.25):
+    """Centro (cx, cy) y radio del círculo que mejor ajusta los puntos.
+
+    Ajuste algebraico (Kåsa) descartando de forma iterativa los puntos a más
+    de tol·R del círculo (la aproximación en línea recta antes de la órbita).
+    """
+    x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+    keep = np.ones(len(x), dtype=bool)
+    cx = cy = r = 0.0
+    for _ in range(iters):
+        if keep.sum() < 3:
+            break
+        a = np.column_stack([2 * x[keep], 2 * y[keep], np.ones(keep.sum())])
+        b = x[keep] ** 2 + y[keep] ** 2
+        (cx, cy, c), *_ = np.linalg.lstsq(a, b, rcond=None)
+        r = float(np.sqrt(max(c + cx ** 2 + cy ** 2, 0.0)))
+        keep = np.abs(np.hypot(x - cx, y - cy) - r) <= tol * r
+    return float(cx), float(cy), r
+
+
+def bag_frame_angles(bag, n_frames, center=None, offset=0.0, log=print):
+    """Ángulo alrededor del objeto de cada frame del video, según el bag.
+
+    El video (nodo_video) empieza con el primer estado de vuelo y termina al
+    dejar de volar; el bag trae ese estado en /flight_state, así que el frame
+    i corresponde a t = t_inicio + offset + i·duración/n_frames. Solo cuentan
+    los frames en AUTOMATIC (estado 1) con la pose en /bebop1/pose dentro de
+    ±50 % del radio de la órbita; el resto devuelve NaN. center = (x, y) del
+    objeto; None = centro del círculo ajustado a la pose en AUTOMATIC.
+    Requiere ROS 2 (lee el bag con rosidl).
+    """
+    import sqlite3
+
+    from rclpy.serialization import deserialize_message
+    from rosidl_runtime_py.utilities import get_message
+
+    if os.path.isdir(bag):
+        dbs = sorted(glob.glob(os.path.join(bag, '*.db3')))
+        if not dbs:
+            raise RuntimeError(f'No hay .db3 en {bag}')
+        bag = dbs[0]
+    con = sqlite3.connect(bag)
+    topics = {r[1]: (r[0], get_message(r[2])) for r in
+              con.execute('SELECT id, name, type FROM topics')}
+    for needed in ('/flight_state', '/bebop1/pose'):
+        if needed not in topics:
+            raise RuntimeError(f'El bag no tiene {needed}')
+
+    def series(name):
+        tid, mtype = topics[name]
+        return [(ts * 1e-9, deserialize_message(raw, mtype)) for ts, raw in
+                con.execute('SELECT timestamp, data FROM messages WHERE topic_id=? '
+                            'ORDER BY timestamp', (tid,))]
+
+    states = [(t, m.data) for t, m in series('/flight_state')]
+    poses = [(t, m.position.x, m.position.y) for t, m in series('/bebop1/pose')]
+    recording = {1, 2, 5, 6, 7, 8}   # igual que nodo_video.RECORDING_STATES
+    t_start = next((t for t, st in states if st in recording), None)
+    if t_start is None:
+        raise RuntimeError('El bag no tiene estados de vuelo')
+    t_end = next((t for t, st in states if t > t_start and st not in recording),
+                 states[-1][0])
+    pose = np.array(poses)
+    st_t = np.array([t for t, _ in states])
+    st_v = np.array([v for _, v in states])
+
+    times = t_start + offset + (t_end - t_start) * np.arange(n_frames) / n_frames
+    x = np.interp(times, pose[:, 0], pose[:, 1])
+    y = np.interp(times, pose[:, 0], pose[:, 2])
+    state = st_v[np.clip(np.searchsorted(st_t, times, side='right') - 1, 0, len(st_v) - 1)]
+    auto = (state == 1) & (times >= pose[0, 0]) & (times <= pose[-1, 0])
+    if auto.sum() < 10:
+        raise RuntimeError('Menos de 10 frames en AUTOMATIC: no hay órbita que repartir')
+    if center is None:
+        cx, cy, r = fit_circle(x[auto], y[auto])
+    else:
+        cx, cy = center
+        r = float(np.median(np.hypot(x[auto] - cx, y[auto] - cy)))
+    dist = np.hypot(x - cx, y - cy)
+    use = auto & (np.abs(dist - r) <= 0.5 * r)
+    ang = np.where(use, np.arctan2(y - cy, x - cx), np.nan)
+    log(f'Bag: video {t_end - t_start:.1f} s ({n_frames} frames), centro ({cx:.2f}, {cy:.2f}), '
+        f'radio {r:.2f} m, {int(use.sum())} frames en la órbita')
+    return ang
+
+
 def _resize(img, max_width):
     import cv2
     h, w = img.shape[:2]
@@ -108,11 +221,14 @@ def list_images(folder):
 
 
 def extract_frames(source, out_dir, n_frames=120, max_width=0,
-                   blur_ratio=0.35, skip_start=0, skip_end=0, log=print):
+                   blur_ratio=0.35, skip_start=0, skip_end=0, log=print,
+                   angles_fn=None):
     """Copia a out_dir los frames elegidos de un video o carpeta.
 
     skip_start / skip_end: frames a ignorar al principio y al final
-    (despegue y aterrizaje). Devuelve la lista de rutas escritas.
+    (despegue y aterrizaje). angles_fn(total) -> ángulo de cada frame (NaN =
+    descartar): reparte por ángulo alrededor del objeto en vez de por índice.
+    Devuelve la lista de rutas escritas.
     """
     import cv2
     if os.path.isdir(source):
@@ -135,7 +251,15 @@ def extract_frames(source, out_dir, n_frames=120, max_width=0,
     if hi - lo < 2:
         raise RuntimeError(f'Quedan {max(hi - lo, 0)} frames tras recortar '
                            f'inicio/fin (total {total})')
-    chosen = [lo + i for i in select_frames(scores[lo:hi], n_frames, blur_ratio)]
+    if angles_fn is not None:
+        ang = np.asarray(angles_fn(total), dtype=float)
+        ang[:lo] = np.nan
+        ang[hi:] = np.nan
+        chosen = select_frames_by_angle(scores, ang, n_frames, blur_ratio)
+    else:
+        chosen = [lo + i for i in select_frames(scores[lo:hi], n_frames, blur_ratio)]
+    if not chosen:
+        raise RuntimeError('No quedó ningún frame tras la selección')
     log(f'Frames: {total} leídos, {hi - lo} útiles, {len(chosen)} elegidos '
         f'(nitidez mediana {np.median(scores[lo:hi]):.0f})')
 

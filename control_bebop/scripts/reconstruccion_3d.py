@@ -17,6 +17,8 @@ Uso:
     python3 scripts/reconstruccion_3d.py carpeta_frames/ --frames 80
     python3 scripts/reconstruccion_3d.py vuelo.avi --skip-start 150 --skip-end 150
     python3 scripts/reconstruccion_3d.py vuelo.avi --solo-frames   # sin COLMAP
+    # Frames repartidos por ángulo alrededor del objeto (requiere ROS 2 sourced):
+    python3 scripts/reconstruccion_3d.py videos/vuelo_X.avi --bag bags/vuelo_real_X
 
 Detalles en control_bebop/RECONSTRUCCION_3D.md.
 """
@@ -57,6 +59,14 @@ def main():
                     help='frames a ignorar al final (aterrizaje)')
     ap.add_argument('--blur', type=float, default=0.35,
                     help='descarta ventanas con nitidez < blur·mediana (0 = no)')
+    ap.add_argument('--bag', default='',
+                    help='bag del vuelo: reparte los frames por ángulo alrededor del '
+                         'objeto, solo en AUTOMATIC (requiere ROS 2)')
+    ap.add_argument('--centro', default='',
+                    help='x,y del objeto en el marco del bag (por defecto, el centro '
+                         'del círculo ajustado a la órbita)')
+    ap.add_argument('--offset-bag', type=float, default=0.0,
+                    help='segundos a sumar al tiempo del video respecto al bag')
     ap.add_argument('--ancho', type=int, default=0,
                     help='reduce los frames a este ancho en px (0 = original)')
     ap.add_argument('--camara', default='auto', choices=['auto'] + sorted(CAMERAS),
@@ -90,9 +100,20 @@ def main():
     t0 = time.time()
 
     print(f'Entrada: {entrada}\nSalida:  {salida}')
-    written = rec.extract_frames(
-        entrada, frames_dir, n_frames=args.frames, max_width=args.ancho,
-        blur_ratio=args.blur, skip_start=args.skip_start, skip_end=args.skip_end)
+    angles_fn = None
+    if args.bag:
+        centro = tuple(float(v) for v in args.centro.split(',')) if args.centro else None
+        bag = os.path.abspath(os.path.expanduser(args.bag))
+        angles_fn = lambda total: rec.bag_frame_angles(  # noqa: E731
+            bag, total, center=centro, offset=args.offset_bag)
+    try:
+        written = rec.extract_frames(
+            entrada, frames_dir, n_frames=args.frames, max_width=args.ancho,
+            blur_ratio=args.blur, skip_start=args.skip_start, skip_end=args.skip_end,
+            angles_fn=angles_fn)
+    except (RuntimeError, ImportError) as e:
+        print(f'\nERROR: {e}', file=sys.stderr)
+        return 1
     print(f'{len(written)} frames en {frames_dir}')
     if args.solo_frames:
         return 0
