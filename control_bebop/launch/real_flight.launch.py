@@ -26,6 +26,10 @@ Uso:
 
     # Sin localización visual (solo odometría):
     ros2 launch control_bebop real_flight.launch.py launch_vision:=false
+
+    # Visión al mando (sin lock no inicia la órbita y la órbita pasa a HOVER).
+    # Por defecto modo sombra: vuela con la odometría y solo graba la corrección.
+    ros2 launch control_bebop real_flight.launch.py correccion:=true
 """
 
 import os
@@ -70,6 +74,9 @@ def _build_nodes(context):
         print(f'[real_flight] Usando calibración: {calib_src}')
     elif use_calib:
         print('[real_flight] use_calibration:=true pero no existe real_drone_calibrated.yaml, se ignora.')
+    correccion = LaunchConfiguration('correccion').perform(context).lower() == 'true'
+    params.append({'vision_shadow': not correccion})
+    print(f'[real_flight] Visión {"al mando" if correccion else "en modo sombra"} (correccion:={correccion})')
 
     # Forzado explícito: NUNCA depender de que el YAML lo traiga
     real = {'use_real_drone': True}
@@ -205,5 +212,8 @@ def generate_launch_description():
                               description='Localizador ArUco con la cámara del Bebop (mueve el tilt)'),
         DeclareLaunchArgument('use_calibration', default_value='false',
                               description='Cargar config/real_drone_calibrated.yaml'),
+        DeclareLaunchArgument('correccion', default_value='false',
+                              description='true: el control usa la pose corregida por ArUco '
+                                          '(exige lock); false: modo sombra, vuelo libre'),
         OpaqueFunction(function=_build_nodes),
     ])

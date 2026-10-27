@@ -377,7 +377,7 @@ Criterio: hay lock durante toda la órbita (título `LOCK`) y la cian coincide c
 
 ## 10. Vuelo 3: hover con visión al mando
 
-`config/real_drone.yaml` ya trae `vision_shadow: false` (23 oct). Lanzar igual que el vuelo 1. Qué cambia:
+Lanzar con `ros2 launch control_bebop real_flight.launch.py correccion:=true` (desde el 27 oct el launch real fuerza `vision_shadow`: sin `correccion:=true` vuela en modo sombra, sin exigir marcadores). Qué cambia:
 - `/bebop1/pose` es la pose corregida: el control y la geocerca usan la visión.
 - R1 se rechaza sin lock ("Órbita rechazada: posición incierta").
 - Sin lock más de 2 s en AUTOMATIC, RECOVERY o RETURN_HOME (unos 17 s sin ningún marcador) → HOVER.

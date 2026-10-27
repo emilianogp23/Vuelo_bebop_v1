@@ -129,13 +129,13 @@
     trim_y: 0.0
 
     # ── Trayectoria circular con orientación al centro (lookat) ──
-    target_x: 1.0          # Centro del círculo (m, marco de despegue)
+    target_x: 0.8          # Centro del círculo (m, marco de despegue)
     target_y: 0.0
-    circle_radius: 0.50    # Radio del círculo (m)
+    circle_radius: 0.60    # Radio del círculo (m)
     circle_speed: 0.10     # vuelta en ~63 s; deja ~50 % de margen de yaw
     yaw_mode: lookat       # orientar el frente del dron hacia el centro
     lookat_center: true    # enfoca automáticamente (target_x, target_y)
-    lookat_x: 1.0
+    lookat_x: 0.8
     lookat_y: 0.0
     hold_entry_altitude: true # mantiene la altura en la que despegó sin saltos
     min_entry_altitude: 1.05  # sobre min_z_outside_safe: la órbita sale de la zona segura

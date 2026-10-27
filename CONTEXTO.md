@@ -65,7 +65,7 @@ Dinámica del Bebop real: pitch/roll es inclinación (≈ aceleración), retardo
 - 23 oct 16:36 (`..._163618`, vuelo libre en manual): volando rápido la odometría erró ~1 m en 3 m y el filtro rechazó las mediciones buenas (p90 94 cm contra el video). Arreglo: `vision_q_move` 0.02 (incertidumbre por metro recorrido, en `vision.py`) y `vision_offset_rate_xy` 0.25. Reproducido offline con los tres bags del día contra los videos: libre p90 46 cm y 1 rechazo; las órbitas igual (11 cm).
 
 ## 7. Problemas abiertos
-- Validados en vuelo real (23 oct): parche de altura, fusión visual en modo sombra, `lookat`. Desde entonces `real_drone.yaml` trae `vision_shadow: false` (visión al mando, también en simulación); falta volarlo (vuelos 3 y 4 de la guía).
+- Validados en vuelo real (23 oct): parche de altura, fusión visual en modo sombra, `lookat`. `real_drone.yaml` trae `vision_shadow: false` (visión al mando en simulación), pero desde el 27 oct `real_flight.launch.py` lo fuerza con el argumento `correccion` (por defecto `false` = modo sombra, para volar libre sin marcadores; `correccion:=true` = visión al mando). Falta volarlo (vuelos 3 y 4 de la guía).
 - Medir los ArUco del piso.
 - Altura de la órbita: con la cámara a −28° el bote (0.70–0.95 m) se encuadra a ~1.05–1.1 m, no a 1.5 m.
 - Con `yaw_mode: fixed` y la visión al mando, en Gazebo hay ~15 s sin marcadores cerca de x = 1.5 → se pierde el lock → HOVER. Con `lookat` completa.
@@ -79,7 +79,7 @@ Dinámica del Bebop real: pitch/roll es inclinación (≈ aceleración), retardo
 - Revisar que no quede un `ros2 bag record` colgado tras cerrar un launch (`pgrep -fa "ros2 bag"`).
 
 ## 8. Siguiente paso
-Vuelo 3 de la guía (hover con la visión al mando; `real_drone.yaml` ya lo trae) y luego vuelo 4 (órbita en `lookat`). Antes de despegar, `ros2 topic hz /bebop/odom` (el intento de las 15:45 del 23 oct no tenía odometría). Ponerle textura a la caja para la reconstrucción. Tras cada vuelo: `python3 control_bebop/scripts/analisis_bag.py <bag>`.
+Vuelo 3 de la guía (hover con la visión al mando: `real_flight.launch.py correccion:=true`) y luego vuelo 4 (órbita en `lookat`). Antes de despegar, `ros2 topic hz /bebop/odom` (el intento de las 15:45 del 23 oct no tenía odometría). Ponerle textura a la caja para la reconstrucción. Tras cada vuelo: `python3 control_bebop/scripts/analisis_bag.py <bag>`.
 
 ## 9. Comandos útiles
 ```bash
