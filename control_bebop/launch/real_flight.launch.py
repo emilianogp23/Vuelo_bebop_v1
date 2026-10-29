@@ -185,7 +185,7 @@ def _build_nodes(context):
             cmd=['ros2', 'bag', 'record', '-s', 'sqlite3', '-o', bag_path,
                  '/bebop/odom', '/bebop/cmd_vel', '/bridge/cmd_vel_raw',
                  '/bebop1/pose', '/odom_local', '/joy', '/joy_cmd', '/joy_commands', '/deadman_active',
-                 '/flight_state', '/goal', '/goal_vel',
+                 '/flight_state', '/bridge/landing', '/goal', '/goal_vel',
                  '/bebop/altitude', '/trajectory_stalled',
                  '/vision/onboard/pose', '/vision/fused_pose', '/vision/odom_pose',
                  '/vision/lock', '/vision/reset'],
