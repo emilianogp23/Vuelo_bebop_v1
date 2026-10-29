@@ -92,6 +92,9 @@ ros2 launch control_bebop preview_trajectory.launch.py    # sin dron ni Gazebo
 ros2 run control_bebop calibrar_camara --ros-args -p square_length:=<medido>
 python3 control_bebop/scripts/analisis_bag.py control_bebop/bags/vuelo_real_<fecha>
 python3 control_bebop/scripts/replay_3d.py <bag>
+# Nube densa con CUDA: el colmap de apt no tiene CUDA; pycolmap-cuda12 4.2.1 está en ~/colmap_cuda_env.
+# Tras reconstruccion_3d.py (deja dense/ sin distorsión), en ese venv:
+#   pycolmap.patch_match_stereo('<rec>/dense'); pycolmap.stereo_fusion('<rec>/dense.ply', '<rec>/dense', output_type='ply')
 cd control_bebop && python3 -m pytest test/ -q
 ```
 
