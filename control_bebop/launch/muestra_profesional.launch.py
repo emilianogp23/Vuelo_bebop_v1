@@ -6,8 +6,17 @@ Ejecuta:
   2. real_drone_bridge (transformación al marco de despegue y publicación de odometría calibrada)
   3. joy_node + joystick_interface (Mando PS5 DualSense)
   4. demo_safety_manager (L2+× despega y el dron queda en hover nativo a ~1 m; mismos botones que el vuelo real)
-  5. muestra_odometria_gui (Suite gráfica PyQt5 con mapa espacial, horizonte artificial, telemetría y cámara YOLO)
+  5. muestra_odometria_gui (Suite gráfica PyQt5 con mapa 2D/3D, horizonte artificial, telemetría y cámara YOLO)
   6. ros2 bag record (opcional para registrar la sesión)
+
+Mando PS5 (L2 es el deadman: sin él se ignora todo movimiento):
+  L2 + ×          despegar (sube a ~1 m y queda en hover)
+  L2 sostenido +  stick izquierdo = avance/lateral, cruceta = altura/giro (manual:=true)
+  soltar L2       hover nativo
+  ○               aterrizar          △  aterrizaje inmediato
+  L1 + R1 + △     corte total de motores (el dron cae)
+  Share           FlatTrim (en tierra)   Options  reset desde emergencia
+  El stick derecho no se usa. La inclinación de la cámara se maneja desde la GUI.
 
 Uso típico:
   # Con driver corriendo en otra terminal:
@@ -18,6 +27,13 @@ Uso típico:
 
   # Modo presentación en proyector (sin mando físico si solo se usa la GUI):
   ros2 launch control_bebop muestra_profesional.launch.py use_joystick:=false
+
+  # Solo hover (sin control manual) o con otra velocidad máxima:
+  ros2 launch control_bebop muestra_profesional.launch.py manual:=false
+  ros2 launch control_bebop muestra_profesional.launch.py manual_speed:=0.15
+
+  # Vista inicial de la GUI: map | camera | split, y mapa 2d | 3d:
+  ros2 launch control_bebop muestra_profesional.launch.py gui_view:=split gui_map:=3d
 """
 
 import os
@@ -46,6 +62,12 @@ def _build_nodes(context):
         print(f'[muestra_profesional] Usando calibración: {calib_src}')
 
     real = {'use_real_drone': True}
+
+    manual = LaunchConfiguration('manual').perform(context).lower() == 'true'
+    manual_speed = float(LaunchConfiguration('manual_speed').perform(context))
+    # Tope absoluto: el bridge satura en 0.4 (max_cmd_xy); más no tiene efecto
+    manual_speed = max(0.0, min(manual_speed, 0.4))
+    print(f'[muestra_profesional] Manual {"ON" if manual else "OFF"} (≤ {manual_speed:.2f})')
 
     # control_bebop/bags, relativo al proyecto (ver control_bebop/paths.py)
     bag_dir = data_dir('bags')
@@ -77,6 +99,10 @@ def _build_nodes(context):
             package='control_bebop',
             executable='demo_safety_manager',
             name='demo_safety_manager',
+            parameters=[{
+                'allow_manual_nudge': manual,
+                'max_nudge_speed': manual_speed,
+            }],
             output='screen',
         ),
 
@@ -100,11 +126,16 @@ def _build_nodes(context):
             condition=IfCondition(LaunchConfiguration('use_joystick')),
         ),
 
-        # 6. Suite Gráfica Profesional (PyQt5) — Controla visualización y orientación sostenida de cámara
+        # 6. GUI (PyQt5): mapa 2D/3D, cámara con YOLO y orientación sostenida de cámara.
+        #    base_cfg aporta las dimensiones del corral (arena_x_max, max_z, safe_zone_radius).
         Node(
             package='control_bebop',
             executable='muestra_odometria_gui',
             name='muestra_odometria_gui',
+            parameters=[base_cfg, {
+                'gui_view': LaunchConfiguration('gui_view').perform(context),
+                'gui_map': LaunchConfiguration('gui_map').perform(context),
+            }],
             output='screen',
         ),
 
@@ -113,7 +144,8 @@ def _build_nodes(context):
             cmd=['ros2', 'bag', 'record', '-s', 'sqlite3', '-o', bag_path,
                  '/bebop/odom', '/bebop1/pose', '/odom_local',
                  '/joy', '/joy_cmd', '/joy_commands',
-                 '/demo/status', '/demo/command'],
+                 '/demo/status', '/demo/command', '/bridge/landing',
+                 '/bebop/altitude', '/bebop/cmd_vel'],
             output='log',
             condition=IfCondition(LaunchConfiguration('record_bag')),
         ),
@@ -144,6 +176,21 @@ def generate_launch_description():
             'record_bag', default_value='false',
             description='Registrar sesión en rosbag'
         ),
+        DeclareLaunchArgument(
+            'manual', default_value='true',
+            description='Control manual con L2 sostenido (false: solo hover)'
+        ),
+        DeclareLaunchArgument(
+            'manual_speed', default_value='0.25',
+            description='Comando máximo del control manual, 0.0-0.4 (el bridge satura en 0.4)'
+        ),
+        DeclareLaunchArgument(
+            'gui_view', default_value='map',
+            description='Vista inicial de la GUI: map | camera | split'
+        ),
+        DeclareLaunchArgument(
+            'gui_map', default_value='2d',
+            description='Mapa inicial de la GUI: 2d | 3d'
+        ),
         OpaqueFunction(function=_build_nodes),
     ])
-

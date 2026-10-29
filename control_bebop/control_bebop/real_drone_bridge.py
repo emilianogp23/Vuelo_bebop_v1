@@ -8,6 +8,12 @@ Geocerca (CommandGate de safety.py): de /bridge/takeoff a /bridge/land o emergen
     sobre todo comando y sobre los ceros del watchdog, con la pose corregida por
     visión si hay lock (geofence_use_vision) y la velocidad medida del Bebop.
     /bridge/takeoff, /bridge/land, /bridge/emergency, /bridge/flattrim (Empty)
+Aterrizaje suave (SoftLanding en safety.py; parámetros landing_* de real_drone.yaml):
+    /bridge/land con el dron en el aire no manda land de inmediato: baja con gaz a
+    ≤ 0.25 m/s, frena hasta 0.10 m/s cerca del piso y manda land a ~8 cm (el nativo
+    baja a ~0.7 m/s hasta el piso). Durante la rutina ignora /bridge/cmd_vel_raw y
+    takeoff; /bridge/emergency la cancela y corta motores.
+    /bridge/landing (Bool): True mientras dura (flight_manager y demo_safety_manager esperan el False)
 Salidas (driver):
     /bebop/cmd_vel, /bebop/takeoff, /bebop/land, /bebop/reset, /bebop/flattrim
 Odometría:
@@ -32,7 +38,7 @@ from std_msgs.msg import Bool, Empty, Float64
 
 from .frames import (TakeoffFrame, quaternion_from_yaw, select_altitude,
                      yaw_from_quaternion)
-from .safety import CommandGate, GeofenceParams, clamp
+from .safety import CommandGate, GeofenceParams, SoftLanding, SoftLandingParams, clamp
 from .vision import VisionFusion
 
 
@@ -117,6 +123,27 @@ def geofence_params_from_node(node):
         push_gain=gp('geofence_push_gain'), max_push=gp('geofence_max_push'))
 
 
+def soft_landing_params_from_node(node):
+    """SoftLandingParams con los parámetros landing_* de real_drone.yaml."""
+    defaults = SoftLandingParams()
+    names = (('landing_soft', 'enabled'), ('landing_v_max', 'v_max'),
+             ('landing_v_touch', 'v_touch'), ('landing_ramp_height', 'ramp_height'),
+             ('landing_cut_height', 'cut_height'), ('landing_cmd_gain', 'cmd_gain'),
+             ('landing_kp', 'kp'), ('landing_ki', 'ki'), ('landing_i_max', 'i_max'),
+             ('landing_max_cmd', 'max_cmd'), ('landing_stall_v', 'stall_v'),
+             ('landing_vz_tau', 'vz_tau'), ('landing_slew', 'slew'), ('landing_timeout', 'timeout'),
+             ('landing_fallback_speed', 'fallback_speed'),
+             ('landing_fallback_time', 'fallback_time'),
+             ('landing_stall_height', 'stall_height'), ('landing_stall_time', 'stall_time'),
+             ('landing_stall_descent', 'stall_descent'), ('landing_stall_grace', 'stall_grace'),
+             ('landing_stall_confirm', 'stall_confirm'),
+             ('landing_contact_confirm', 'contact_confirm'), ('landing_vz_window', 'vz_window'))
+    for param, field in names:
+        node.declare_parameter(param, getattr(defaults, field))
+    return SoftLandingParams(**{field: node.get_parameter(param).value
+                                for param, field in names})
+
+
 class RealDroneBridge(Node):
     def __init__(self):
         super().__init__('real_drone_bridge')
@@ -160,6 +187,8 @@ class RealDroneBridge(Node):
         self.max_z = gp('max_cmd_z').value
         self.max_yaw = gp('max_cmd_yaw').value
         self.gate = CommandGate(geofence, gp('cmd_timeout').value)
+        self.landing_params = soft_landing_params_from_node(self)
+        self.landing = SoftLanding(self.landing_params)
         self.geofence_use_vision = gp('geofence_use_vision').value
         self.use_altitude = gp('use_altitude_topic').value
         self.altitude_timeout = gp('altitude_timeout').value
@@ -180,6 +209,8 @@ class RealDroneBridge(Node):
         # ── Publishers al stack interno ───────────────────────
         self.pub_odom_local = self.create_publisher(Odometry, '/odom_local', 10)
         self.pub_pose = self.create_publisher(Pose, '/bebop1/pose', 10)
+        # True mientras corre el aterrizaje suave (flight_manager y demo esperan el False)
+        self.pub_landing = self.create_publisher(Bool, '/bridge/landing', 10)
 
         # ── Subscribers del stack interno ─────────────────────
         self.create_subscription(Twist, '/bridge/cmd_vel_raw', self.cmd_vel_cb, 10)
@@ -209,16 +240,22 @@ class RealDroneBridge(Node):
         self.last_odom_time = None
         self.altitude = None
         self.last_altitude_time = None
+        self.odom_vz = None           # vz del dron (m/s, + arriba) y cuándo llegó
+        self.last_vz_time = None
         self.z_is_measured = False
         self._last_geofence_log = 0.0
 
         self.create_timer(0.05, self.watchdog_loop)   # 20 Hz
+        self.create_timer(0.5, lambda: self.pub_landing.publish(Bool(data=self.landing.active)))
         self.create_timer(5.0, self.status_loop)
         self.get_logger().info(
             'Real Drone Bridge listo. /bridge/* → /bebop/*  |  watchdog 20 Hz')
 
     # ── Comandos discretos ────────────────────────────────────
     def takeoff_cb(self, _):
+        if self.landing.active:
+            self.get_logger().warn('TAKEOFF ignorado: aterrizaje suave en curso')
+            return
         # Re-anclar el marco de despegue al punto actual. Con visión al mando
         # no: el offset visual se calculó sobre el marco viejo.
         if not self.vision_active:
@@ -228,13 +265,59 @@ class RealDroneBridge(Node):
         self.pub_takeoff.publish(Empty())
         self.get_logger().info('🛫 TAKEOFF → /bebop/takeoff')
 
+    def _fresh_altitude(self):
+        """Altura medida por el Bebop (sonar + barómetro) o None si no hay una reciente."""
+        if not self.use_altitude or self.altitude is None or self.last_altitude_time is None:
+            return None
+        if time.time() - self.last_altitude_time > self.altitude_timeout:
+            return None
+        return self.altitude
+
+    def _fresh_vz(self):
+        """Velocidad vertical de la odometría o None si no hay una reciente."""
+        if self.odom_vz is None or time.time() - self.last_vz_time > self.landing_params.vz_stale:
+            return None
+        return self.odom_vz
+
     def land_cb(self, _):
+        """Todo aterrizaje (○, △, GUI, pérdida de mando, automáticos) pasa por aquí."""
+        if self.landing.active:
+            return
+        was_flying = self.gate.flying
         self.gate.land()
-        self.pub_land.publish(Empty())
-        self.get_logger().info('🛬 LAND → /bebop/land')
+        z = self._fresh_altitude()
+        p = self.landing_params
+        in_air = z > p.cut_height + 0.05 if z is not None else was_flying
+        if p.enabled and in_air:
+            self.landing.start(time.time())
+            self.pub_landing.publish(Bool(data=True))
+            origin = f'desde {z:.2f} m' if z is not None else 'sin altura medida (por tiempo)'
+            self.get_logger().info(f'🛬 Aterrizaje suave: {origin}')
+        else:
+            self.pub_land.publish(Empty())
+            self.get_logger().info('🛬 LAND → /bebop/land')
+
+    def _end_landing(self):
+        self.landing = SoftLanding(self.landing_params)
+        self.pub_landing.publish(Bool(data=False))
+
+    def landing_step(self):
+        """Un paso del aterrizaje suave: gaz hacia abajo, y land al llegar al piso."""
+        gaz, land_now, done, reason = self.landing.update(
+            time.time(), self._fresh_altitude(), self._fresh_vz())
+        if land_now:
+            self.pub_land.publish(Empty())
+            self.get_logger().info(f'🛬 LAND → /bebop/land ({reason})')
+        if done:
+            self._end_landing()
+            self.get_logger().info('🛬 Aterrizaje suave terminado')
+        cmd = Twist()
+        cmd.linear.z = float(gaz)       # pitch, roll y yaw en cero: hover nativo en xy
+        self.pub_cmd_vel.publish(cmd)
 
     def emergency_cb(self, _):
         self.gate.land()
+        self._end_landing()
         self.pub_reset.publish(Empty())
         self.get_logger().error('🚨 EMERGENCY (corte de motores) → /bebop/reset')
 
@@ -243,6 +326,8 @@ class RealDroneBridge(Node):
         self.get_logger().info('📐 FLATTRIM → /bebop/flattrim')
 
     def cmd_vel_cb(self, msg):
+        if self.landing.active:
+            return      # durante el aterrizaje suave solo manda la rutina
         self.gate.command((
             clamp(msg.linear.x + self.trim_pitch, -self.max_xy, self.max_xy),
             clamp(msg.linear.y + self.trim_roll, -self.max_xy, self.max_xy),
@@ -301,6 +386,7 @@ class RealDroneBridge(Node):
 
         self.current_local_pose = (lx, ly, lz, lyaw)
         tw = msg.twist.twist.linear
+        self.odom_vz, self.last_vz_time = tw.z, time.time()
         vx, vy, _ = self.takeoff_frame.body_vel_to_local(tw.x, tw.y, tw.z, fence[3])
         self.fence_pose, self.fence_vel = fence, (vx, vy)
 
@@ -328,6 +414,9 @@ class RealDroneBridge(Node):
 
     # ── Watchdog ──────────────────────────────────────────────
     def watchdog_loop(self):
+        if self.landing.active:
+            self.landing_step()
+            return
         # Sin comando reciente: ceros (hover nativo). La geocerca actúa igual en el aire.
         now = time.time()
         (pitch, roll, gaz, yaw_rate), events = self.gate.output(
@@ -364,8 +453,9 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        # Último mensaje: ceros (hover)
-        node.pub_cmd_vel.publish(Twist())
+        # Último mensaje: ceros (hover); si el contexto ya se cerró (Ctrl-C) no se puede publicar
+        if rclpy.ok():
+            node.pub_cmd_vel.publish(Twist())
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

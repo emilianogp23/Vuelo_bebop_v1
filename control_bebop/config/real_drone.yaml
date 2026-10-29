@@ -33,6 +33,42 @@
     use_altitude_topic: true
     altitude_timeout: 1.0
 
+    # ── Aterrizaje suave (real_drone_bridge) ──────────────────
+    # Todo aterrizaje (○, △, GUI, mando mudo, órbita terminada, RETURN_HOME) pasa por
+    # el bridge. El land nativo del Bebop baja a ~0.7 m/s hasta el piso (bags del 27
+    # oct), de ahí el golpe. La rutina baja con gaz a landing_v_max y frena hasta
+    # landing_v_touch al llegar a landing_cut_height; ahí manda land. Usa la altura
+    # medida (/bebop/altitude); sin ella baja por tiempo. landing_soft:false vuelve
+    # al land nativo. Para aterrizar aún más suave: bajar v_max / v_touch.
+    # La simulación usa v_max, v_touch, ramp_height y cut_height como perfil de descenso.
+    landing_soft: true
+    landing_v_max: 0.25        # m/s arriba de la rampa
+    landing_v_touch: 0.10      # m/s al llegar a la altura de corte
+    landing_ramp_height: 0.70  # m sobre la altura de corte en que se va frenando
+    landing_cut_height: 0.08   # m: aquí se manda land
+    landing_cmd_gain: 0.8      # m/s por unidad de gaz (medido 0.4–1.1 en los bags)
+    landing_kp: 0.6            # corrección de gaz por m/s de error de velocidad medida
+    landing_ki: 1.5            # gaz por (m/s de error · s): vence la resistencia cerca del piso
+    landing_i_max: 0.4         # tope del aporte integral al gaz
+    landing_max_cmd: 0.55      # tope de |gaz|
+    landing_vz_tau: 0.3        # s del filtro de la vz de odometría
+    landing_stall_v: 0.05      # m/s: vz filtrada menor que esto (empujando) = estancado
+    landing_slew: 0.5          # cambio máximo de gaz por segundo
+    landing_timeout: 25.0      # s: si no llega al piso, land
+    landing_fallback_speed: 0.15  # m/s sin altura medida
+    landing_fallback_time: 5.0    # s de descenso sin altura medida antes de land
+    # La altura medida (sonar + barómetro) en el piso puede quedar en 0.3–0.5 m (bags del
+    # 28 oct) y nunca llegar a cut_height. Bajo stall_height, si en stall_time la altura
+    # media baja menos de stall_descent, está en el piso y se manda land. Los picos del
+    # sonar (~0.15 s) no cuentan: stall_confirm / contact_confirm piden persistencia.
+    landing_stall_height: 0.70    # m medidos bajo los que un estancamiento cuenta como piso
+    landing_stall_time: 1.6       # s de ventana (primera mitad vs segunda mitad)
+    landing_stall_descent: 0.02   # m: bajar menos que esto en la ventana = estancado
+    landing_stall_grace: 2.0      # s del inicio sin evaluar estancamiento
+    landing_stall_confirm: 0.5    # s seguidos estancado (empujando) antes de land
+    landing_contact_confirm: 0.3  # s seguidos con z <= cut_height antes de land
+    landing_vz_window: 1.0        # s para medir la velocidad de descenso
+
     # ── Zona segura y robots en el piso ───────────────────────
     # Origen = centro de la zona segura de despegue. Fuera de este círculo la
     # geocerca no deja bajar de min_z_outside_safe ni alejarse si está más
@@ -145,8 +181,8 @@
     # planner lo recorta a (arena_half_size - safety_margin) - |target_x| = 0.95.
     target_x: 0.70       # Centro del círculo (m, marco de despegue)
     target_y: 0.0
-    circle_radius: 0.80    # Radio del círculo (m)
-    circle_speed: 0.10     # vuelta en ~63 s; deja ~50 % de margen de yaw
+    circle_radius: 0.70    # Radio del círculo (m)
+    circle_speed: 0.20    # vuelta en ~63 s; deja ~50 % de margen de yaw
     yaw_mode: lookat       # orientar el frente del dron hacia el centro
     lookat_center: true    # enfoca automáticamente (target_x, target_y)
     lookat_x: 0.8

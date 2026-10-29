@@ -298,7 +298,7 @@ stateDiagram-v2
 Otras reglas:
 
 - **○ aterriza desde cualquier estado en vuelo.** Usa `_force_landing`, que ignora la tabla de transiciones.
-- **△ es aterrizaje inmediato**, no corte de motores, en el dron real y en simulación.
+- **△ aterriza con la misma rutina suave que ○** (ya no hay un aterrizaje más brusco): no es corte de motores, en el dron real y en simulación. Para cortar de verdad está L1 + R1 + △.
 - **L1 + R1 + △ es el corte total de motores** (KILL). El dron cae. Solo para emergencias reales.
 - **Pérdida del mando:** si no llegan mensajes de `/deadman_active` en 3 s en HOVER, MANUAL o AUTOMATIC, aterriza (real y simulación).
 
@@ -410,6 +410,7 @@ Al cambiar de estado se reinician integradores y feedforward.
 - **Comandos.** Al recibir `/bridge/cmd_vel_raw` le suma el trim y lo satura con `max_cmd_xy`, `max_cmd_z` y `max_cmd_yaw`. A 20 Hz aplica la geocerca y lo publica en `/bebop/cmd_vel`.
 - **Watchdog.** Si no llega comando en `cmd_timeout` (0.3 s), publica ceros (hover nativo aunque el PID se caiga). La geocerca actúa también sobre esos ceros.
 - **Geocerca en todo el vuelo** (`CommandGate` de `safety.py`): desde `/bridge/takeoff` hasta `/bridge/land` o `/bridge/emergency`, en cualquier estado (AUTOMATIC, MANUAL, HOVER, RECOVERY, RETURN_HOME) y para cualquier origen del comando (PID, mando, modo muestra). Usa la velocidad medida del Bebop y, con `geofence_use_vision`, la pose corregida por los ArUco cuando hay lock, aunque el control vuele en modo sombra. No actúa en tierra ni al aterrizar, para no impedir un aterrizaje fuera de la zona segura.
+- **Aterrizaje suave** (28 oct; `SoftLanding` en `safety.py`, parámetros `landing_*` en `real_drone.yaml`). Todo aterrizaje (○, △, botón de la GUI, mando mudo, órbita terminada, RETURN_HOME) pasa por `/bridge/land`. Con el dron en el aire el bridge ya no manda `land` de inmediato: baja con `gaz` a ≤ 0.25 m/s, frena hasta 0.10 m/s al acercarse y manda `land` a ~8 cm. El `land` nativo del Bebop baja a ~0.7 m/s hasta el piso (medido en los bags del 27 oct, y a 0.45–0.5 m/s a 30 cm del suelo): de ahí el golpe. La rutina usa la altura medida (`/bebop/altitude`) y corrige el `gaz` con la velocidad de descenso medida, porque la ganancia gaz→vz varía entre 0.4 y 1.1 m/s por unidad. Sin altura medida baja por tiempo (5 s a 0.15 m/s). Si la altura deja de bajar cerca del piso, o pasa `landing_timeout` (25 s), manda `land`. Con el dron ya en el piso manda `land` directo. Mientras dura ignora `/bridge/cmd_vel_raw` y `/bridge/takeoff`; `/bridge/emergency` la cancela y corta motores. Publica `/bridge/landing` (Bool, True mientras dura). Dura ~6 s desde 1 m. `landing_soft: false` vuelve al `land` nativo.
 - **Discretos.** `/bridge/takeoff`, `land`, `emergency` y `flattrim` se reenvían a `/bebop/takeoff`, `land`, `reset` y `flattrim`. Ojo: `/bebop/reset` corta motores.
 - Avisa cada 5 s si no llega odometría.
 
@@ -451,13 +452,15 @@ No está en `real_flight.launch.py`. Si se agrega, choca con el joystick: los do
 
 ### 7.10 Modo muestra: `demo_safety_manager`
 
-Usado por `muestra_profesional.launch.py` para exhibiciones. **El dron sí vuela:** el Bebop no tiene un modo de motores en ralentí, así que el takeoff lo sube a ~1 m y con comando cero queda en hover nativo. Usa los mismos botones que el vuelo real: L2 + × despega, ○ y △ aterrizan, L1 + R1 + △ corta motores, Share FlatTrim. La GUI tiene botones de despegar, aterrizar y corte total. Todo pasa por el bridge (`/bridge/*`), que aplica la geocerca y el watchdog. Publica su estado en `/demo/status` y recibe comandos de la GUI en `/demo/command`. Con `stop_on_deadman_release` aterriza al soltar L2.
+Usado por `muestra_profesional.launch.py` para exhibiciones. **El dron sí vuela:** el Bebop no tiene un modo de motores en ralentí, así que el takeoff lo sube a ~1 m y con comando cero queda en hover nativo. Usa los mismos botones que el vuelo real: L2 + × despega, ○ y △ aterrizan, L1 + R1 + △ corta motores, Share FlatTrim. La GUI tiene botones de despegar, aterrizar y corte total. Todo pasa por el bridge (`/bridge/*`), que aplica la geocerca y el watchdog. Publica su estado en `/demo/status` y recibe comandos de la GUI en `/demo/command`. Con `stop_on_deadman_release` aterriza al soltar L2. Al aterrizar pasa al estado LANDING (`/demo/status` = 2) hasta que el bridge termina el aterrizaje suave (`/bridge/landing` vuelve a False); en ese estado rechaza el despegue.
+
+**Control manual** (28 oct). Con `allow_manual_nudge` (el launch lo activa con `manual:=true`) y L2 sostenido, el stick izquierdo mueve avance y lateral y la cruceta altura y giro. El stick derecho no se usa (tiene drift). El tope es `max_nudge_speed` (`manual_speed:=0.25` en el launch; el bridge satura en 0.4) y el stick a fondo llega justo al tope. Al soltar L2 vuelve el comando cero, es decir, el hover nativo. Sin estar en el aire (ARMED) los sticks se ignoran. Publica `/demo/manual_active` (Bool) para la GUI. `manual:=false` deja solo hover. La inclinación de la cámara se maneja únicamente desde la GUI.
 
 Antes del 22 oct encendía los motores con solo presionar L2, sin ×, y mandaba cada comando tres veces directo al driver sin pasar por la geocerca.
 
 ### 7.11 Detección YOLO
 
-- `yolo_person_detector.py`: clase `YoloPersonDetector` con YOLOv8. Filtra personas y estima la distancia con el modelo pinhole. Busca `yolov8n.pt` en varias rutas. La usa `muestra_odometria_gui`.
+- `yolo_person_detector.py`: clase `YoloPersonDetector` con YOLOv8. Filtra personas y estima la distancia con el modelo pinhole. Los pesos van en `config/yolov8n.pt` (se instalan con el paquete). Nunca descarga el modelo: el Bebop crea su propio Wi-Fi sin internet, y antes la descarga fallaba en silencio y YOLO no arrancaba. Carga en un hilo y expone `status`, `device` y `fps`, que la GUI muestra bajo el video. Sin GPU usa `imgsz=320` (unos 30 fps en CPU). La usa `muestra_odometria_gui`, que corre la inferencia en un hilo aparte y solo sobre el último frame.
 - `diagnostico_yolo`: comprueba que la cámara publica, centra la cámara, corre YOLO e imprime detecciones. Guarda un cuadro en `/tmp/diagnostico_yolo.jpg`.
 
 ### 7.12 control_panel
@@ -492,7 +495,7 @@ Verificado con un bag real: el mando entrega 8 ejes y 13 botones.
 | Cruceta horizontal | eje 6 | Girar |
 | × | botón 0 | Despegar, con L2 |
 | ○ | botón 1 | Aterrizar |
-| △ | botón 2 | Aterrizaje inmediato |
+| △ | botón 2 | Aterrizar (rutina suave, igual que ○) |
 | L1 + R1 + △ | | **Corte total de motores**. Al apretar L1 y R1 también salen sus comandos (home, órbita), pero △ deja el dron en EMERGENCY |
 | □ | botón 3 | Alternar MANUAL y AUTOMATIC, con L2 |
 | L1 | botón 4 | Regresar a home |
@@ -664,9 +667,12 @@ ros2 launch control_bebop real_flight.launch.py
 
 ```bash
 ros2 launch control_bebop muestra_profesional.launch.py   # launch_driver, use_joystick, record_bag
+ros2 launch control_bebop muestra_profesional.launch.py manual:=false manual_speed:=0.15 gui_view:=split gui_map:=3d
 ```
 
-L2 + × despega y el dron queda en hover nativo a ~1 m. Sirve para exhibir la telemetría, la cámara y YOLO.
+L2 + × despega y el dron queda en hover a ~1 m. Con L2 sostenido, el stick izquierdo y la cruceta lo mueven a ≤ 0.25 (`manual_speed`); al soltar L2 vuelve el hover. Sirve para exhibir la telemetría, la cámara y YOLO.
+
+La GUI tiene tres vistas (botones del encabezado o teclas `1`, `2`, `3`): Mapa, Cámara y Dividida. El mapa alterna entre 2D y 3D con la tecla `M`; el 3D muestra el corral, la altura (z) y el dron, y se orbita con el ratón. Parámetros del launch: `gui_view` (`map`, `camera`, `split`) y `gui_map` (`2d`, `3d`). Se compila con `colcon build` (no es `--symlink-install`): sin recompilar se vuela con el código viejo.
 
 ---
 

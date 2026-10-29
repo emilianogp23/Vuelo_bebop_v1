@@ -25,7 +25,7 @@ from rclpy.parameter import Parameter
 from geometry_msgs.msg import Pose, Twist
 from std_msgs.msg import Int32, Bool, Empty
 
-from control_bebop.safety import route_around
+from control_bebop.safety import SoftLandingParams, landing_speed, route_around
 
 
 # ── Constantes de estado ──────────────────────────────────────
@@ -93,8 +93,14 @@ class FlightManager(Node):
         self.declare_parameter('deadman_timeout', 0.5)
         self.declare_parameter('comm_loss_land_timeout', 3.0)
         self.declare_parameter('takeoff_settle_time', 4.0)
-        self.declare_parameter('landing_settle_time', 4.5)
+        # Real: tope de espera al aterrizaje suave del bridge (/bridge/landing)
+        self.declare_parameter('landing_settle_time', 30.0)
+        # Simulación: el descenso usa el mismo perfil que el aterrizaje suave real
+        # (landing_v_max → landing_v_touch al acercarse al piso); landing_rate ya no se usa
         self.declare_parameter('landing_rate', 0.3)
+        for name, default in (('landing_v_max', 0.25), ('landing_v_touch', 0.10),
+                              ('landing_ramp_height', 0.70), ('landing_cut_height', 0.08)):
+            self.declare_parameter(name, default)
         self.declare_parameter('position_tolerance', 0.15)
         self.declare_parameter('touchdown_z', 0.08)
         self.declare_parameter('frequency', 20.0)
@@ -129,6 +135,11 @@ class FlightManager(Node):
         self.landing_settle_time = self.get_parameter(
             'landing_settle_time').value
         self.landing_rate = self.get_parameter('landing_rate').value
+        self.landing_profile = SoftLandingParams(
+            v_max=self.get_parameter('landing_v_max').value,
+            v_touch=self.get_parameter('landing_v_touch').value,
+            ramp_height=self.get_parameter('landing_ramp_height').value,
+            cut_height=self.get_parameter('landing_cut_height').value)
         self.pos_tol = self.get_parameter('position_tolerance').value
         self.touchdown_z = self.get_parameter('touchdown_z').value
         self.freq = self.get_parameter('frequency').value
@@ -168,6 +179,8 @@ class FlightManager(Node):
         self.create_subscription(
             Pose, '/bebop1/pose', self._pose_callback, 10)
         self.create_subscription(
+            Bool, '/bridge/landing', self._bridge_landing_callback, 10)
+        self.create_subscription(
             Bool, '/trajectory_done', self._trajectory_done_callback, 10)
         self.create_subscription(
             Bool, '/trajectory_stalled', self._trajectory_stalled_callback, 10)
@@ -192,6 +205,8 @@ class FlightManager(Node):
         self.goal_yaw = 0.0
 
         # Landing
+        self.bridge_landing = False       # real: el bridge está ejecutando el aterrizaje suave
+        self.bridge_landing_seen = False
         self.landing_z = 0.0
         self.landing_x = 0.0
         self.landing_y = 0.0
@@ -313,7 +328,13 @@ class FlightManager(Node):
             f'Hover en ({self.goal_x:.2f}, {self.goal_y:.2f}, '
             f'{self.goal_z:.2f})')
 
+    def _bridge_landing_callback(self, msg):
+        self.bridge_landing = msg.data
+        if msg.data:
+            self.bridge_landing_seen = True
+
     def _enter_landing(self):
+        self.bridge_landing_seen = False
         self.pub_land.publish(Empty())
         self.landing_x = self.current_x
         self.landing_y = self.current_y
@@ -638,14 +659,17 @@ class FlightManager(Node):
                            self.goal_z, self.goal_yaw)
 
     def _update_landing(self):
-        """Descenso. En dron real usa temporizador nativo de aterrizaje; en simulador usa z."""
+        """Descenso. Real: espera al aterrizaje suave del bridge; simulador: baja la z."""
         if self.use_real_drone:
             elapsed = (self.get_clock().now() - self.state_enter_time).nanoseconds / 1e9
-            if elapsed >= self.landing_settle_time:
+            # Si el bridge aterrizó directo (ya en el piso) nunca marca /bridge/landing
+            finished = ((self.bridge_landing_seen and not self.bridge_landing)
+                        or (not self.bridge_landing_seen and elapsed >= 2.0))
+            if finished or elapsed >= self.landing_settle_time:
                 self.get_logger().info('🛬 Aterrizaje completado en dron real')
                 self._transition_to(IDLE)
         else:
-            self.landing_z -= self.landing_rate * self.dt
+            self.landing_z -= landing_speed(self.landing_z, self.landing_profile) * self.dt
             self.landing_z = max(0.0, self.landing_z)
 
             self._publish_goal(self.landing_x, self.landing_y,
