@@ -181,8 +181,8 @@
     # planner lo recorta a (arena_half_size - safety_margin) - |target_x| = 0.95.
     target_x: 0.70       # Centro del círculo (m, marco de despegue)
     target_y: 0.0
-    circle_radius: 0.70    # Radio del círculo (m)
-    circle_speed: 0.20    # vuelta en ~63 s; deja ~50 % de margen de yaw
+    circle_radius: 0.78    # Radio del círculo (m)
+    circle_speed: 0.25    # vuelta en ~63 s; deja ~50 % de margen de yaw
     yaw_mode: lookat       # orientar el frente del dron hacia el centro
     lookat_center: true    # enfoca automáticamente (target_x, target_y)
     lookat_x: 0.8
