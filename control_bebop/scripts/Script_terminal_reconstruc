@@ -1,0 +1,8 @@
+REC=~/ros2_ws/src/control_bebop/reconstrucciones/vuelo_20261030_103040/
+cd /tmp && ~/colmap_cuda_env/bin/python -c "
+import pycolmap, sys
+rec = sys.argv[1]
+pycolmap.patch_match_stereo(rec + '/dense')
+pycolmap.stereo_fusion(rec + '/dense.ply', rec + '/dense',
+                       input_type='geometric', output_type='ply')
+" "$REC"
