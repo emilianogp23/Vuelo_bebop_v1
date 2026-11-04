@@ -146,7 +146,7 @@ class YoloPersonDetector:
             # Calentamiento: la primera inferencia es lenta y bloquearía la primera imagen
             self._opts = {'imgsz': self.imgsz, 'device': self.device, 'verbose': False}
             if use_cuda:
-                self._opts['half'] = True   # solo con GPU; ultralytics avisa si se pasa half=False
+                self._opts['quantize'] = 16   # solo con GPU; reemplaza half=True (deprecado en ultralytics 8.4)
             model(_blank(self.imgsz), **self._opts)
             self.model = model
             self.status = STATUS_READY
