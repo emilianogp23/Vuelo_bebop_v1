@@ -1,0 +1,58 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <model name="DronePlatformX1">
+    <static>true</static>
+    <link name="base_link">
+      <collision name="collision">
+        <pose>-0.07982 -0.0003 0.816784 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.3976 0.5 0.02</size>
+          </box>
+        </geometry>
+      </collision>
+
+      <!--
+      <collision name="collision">
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <mesh>
+            <uri>meshes/droneplatformx1.dae</uri>
+            <scale>1.0 1.0 1.4</scale>
+          </mesh>
+        </geometry>
+      </collision>
+-->
+      <visual name= "DronePlatformX1_visual">
+        <geometry>
+          <mesh>
+            <uri>meshes/droneplatformx1.dae</uri>
+            <submesh>
+              <name>DronePlatformX1</name>
+              <center>false</center>
+            </submesh>
+            <scale>1.0 1.0 1.4</scale>
+          </mesh>
+        </geometry>
+        <material>
+          <diffuse>1.0 1.0 1.0</diffuse>
+          <specular>1.0 1.0 1.0</specular>
+          <pbr>
+            <metal>
+              <albedo_map>materials/textures/DronePlatformX1_Albedo.jpg</albedo_map>
+              <normal_map>materials/textures/DronePlatformX1_Normal.jpg</normal_map>
+              <metal_map>materials/textures/DronePlatformX1_Metalness.jpg</metal_map>
+              <roughness_map>materials/textures/DronePlatformX1_Roughness.jpg</roughness_map>
+            </metal>
+          </pbr>
+          <!-- fallback to script if no PBR support-->
+          <script>
+            <uri>materials/scripts/</uri>
+            <uri>materials/textures/</uri>
+            <name>UrbanTile/DronPlatformX1_Diffuse</name>
+          </script>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

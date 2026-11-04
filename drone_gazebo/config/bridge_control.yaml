@@ -1,0 +1,26 @@
+# Puente para matrice_flight.launch.py: los nodos de control_bebop usan los
+# tópicos /bebop1/*, aquí se conectan a los del Matrice en Gazebo.
+- ros_topic_name: "/bebop1/cmd_vel"
+  gz_topic_name: "/matrice_100/cmd_vel"
+  ros_type_name: "geometry_msgs/msg/Twist"
+  gz_type_name: "gz.msgs.Twist"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/bebop1/enable"
+  gz_topic_name: "/matrice_100/enable"
+  ros_type_name: "std_msgs/msg/Bool"
+  gz_type_name: "gz.msgs.Boolean"
+  direction: ROS_TO_GZ
+
+# Marco del mundo; pose_relay la pasa al marco de despegue (/bebop1/pose_gt)
+- ros_topic_name: "/matrice_100/pose_world"
+  gz_topic_name: "/model/matrice_100/pose"
+  ros_type_name: "geometry_msgs/msg/Pose"
+  gz_type_name: "gz.msgs.Pose"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/camera/image_raw"
+  gz_topic_name: "/camera/image_raw"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS

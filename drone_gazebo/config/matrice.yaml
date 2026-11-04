@@ -1,0 +1,58 @@
+# Matrice 100 en drone_world con el control de control_bebop.
+# matrice_flight.launch.py carga control_bebop/config/real_drone.yaml, luego
+# sim.yaml (ganancias para comando de velocidad) y al final este archivo.
+#
+# Marco de despegue: origen en el Matrice sobre la plataforma (mundo 1.92, -10,
+# z 0.415), x al frente (= x del mundo), y a la izquierda. En ese marco la
+# estación de bomberos ocupa x [-15.9, 12.1], y [0.9, 19.1], z hasta 11.5 m;
+# su centro está en (-1.92, 10).
+
+/**:
+  ros__parameters:
+    # drone_world no tiene ArUco: pose exacta de Gazebo
+    use_vision: false
+
+    # Geocerca: la órbita llega a |y| = 30 m
+    arena_x_max: 35.0
+    arena_half_size: 35.0
+    max_z: 15.0
+
+    # Órbita alrededor del edificio: r 20 m deja ~3.3 m a las esquinas
+    target_x: -1.92
+    target_y: 10.0
+    circle_radius: 20.0
+    circle_speed: 0.05       # 1 m/s, vuelta en ~126 s
+    yaw_mode: lookat
+    lookat_center: true
+    hold_entry_altitude: false
+    circle_height: 6.0       # media altura del edificio, cámara horizontal
+    approach_speed: 1.0
+    start_tolerance: 0.5
+    track_err_slow: 0.5
+    track_err_stop: 1.5
+
+flight_manager:
+  ros__parameters:
+    arena_half_size: 35.0
+    max_altitude: 15.0
+    # RETURN_HOME (L1) y RECOVERY rodean el edificio por sus esquinas
+    no_fly_boxes: [-15.91, 0.86, 12.07, 19.14]
+    no_fly_margin: 2.0
+
+control_PID:
+  ros__parameters:
+    arena_limit: 35.0
+    max_vel_xy: 2.0
+    max_vel_z: 1.0
+
+sim_odometry:
+  ros__parameters:
+    odom_scale: 1.0
+    odom_bias_vx: 0.0
+    odom_bias_vy: 0.0
+    odom_yaw_drift_deg_s: 0.0
+
+nodo_video:
+  ros__parameters:
+    camera_fps: 20.0         # update_rate de la cámara zenmuse_z3
+    image_topic: /camera/image_raw

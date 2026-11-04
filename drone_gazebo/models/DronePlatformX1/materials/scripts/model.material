@@ -1,0 +1,13 @@
+material UrbanTile/DronPlatformX1_Diffuse
+{
+  technique
+  {
+    pass
+    {
+      texture_unit
+      {
+        texture DronePlatformX1_Albedo.jpg
+        }
+      }
+    }
+  }

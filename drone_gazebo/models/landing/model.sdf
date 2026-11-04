@@ -1,0 +1,32 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <model name="helipuerto">
+    <!-- static true ancla el modelo al suelo, evitando cálculos de gravedad innecesarios -->
+    <static>true</static> 
+    <link name="link">
+      
+      <!-- COLLISION: Usa el STL crudo. El motor de física calcula colisiones rápido sin leer texturas -->
+      <collision name="collision">
+        <geometry>
+          <mesh>
+            <uri>model://landing/meshes/landingpad_intact.obj</uri>
+            <scale>0.2 0.2 0.2</scale>
+            <!-- Puedes agregar <scale>X Y Z</scale> aquí si necesitas ajustar el tamaño -->
+          </mesh>
+        </geometry>
+      </collision>
+
+      <!-- VISUAL: Usa el OBJ. La cámara monocular leerá los materiales y texturas (.mtl, .jpg/.png) -->
+      <visual name="visual">
+        <geometry>
+          <mesh>
+            <uri>model://landing/meshes/landingpad_intact.obj</uri>
+            <scale>0.2 0.2 0.2</scale>
+            <!-- El scale debe ser idéntico al de collision -->
+          </mesh>
+        </geometry>
+      </visual>
+
+    </link>
+  </model>
+</sdf>

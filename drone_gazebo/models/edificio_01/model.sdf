@@ -1,0 +1,23 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <model name="edificio_01">
+    <static>true</static> <!-- Crucial: evita que el simulador le aplique físicas de caída -->
+    <link name="link">
+      <collision name="collision">
+        <geometry>
+          <mesh>
+            <uri>model://edificio_01/meshes/building_04.dae</uri>
+            <scale>4.0 4.0 4.0</scale>
+          </mesh>
+        </geometry>
+      </collision>
+      <visual name="visual">
+        <geometry>
+          <mesh>
+            <uri>model://edificio_01/meshes/building_04.dae</uri>
+          </mesh>
+        </geometry>
+      </visual>
+    </link>
+  </model>
+</sdf>
